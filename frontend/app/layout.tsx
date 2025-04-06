@@ -7,6 +7,7 @@ import { Providers } from "./providers";
 
 import { siteConfig } from "@/config/site";
 import { fontSans } from "@/config/fonts";
+import { ThemeSwitch } from "@/components/theme-switch";
 import CustomNavbar from "@/components/navbar";
 
 export const metadata: Metadata = {
@@ -48,7 +49,7 @@ export default function RootLayout({
               {children}
             </main>
             <footer className="w-full flex items-center justify-center py-3">
-              @Asout3 April 2025
+              @Asout3 April 2025 <ThemeSwitch />
             </footer>
           </div>
         </Providers>
