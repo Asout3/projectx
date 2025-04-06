@@ -1,6 +1,6 @@
 'use client'
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   Navbar,
   NavbarBrand,
@@ -17,10 +17,10 @@ import {
   DropdownItem,
   Avatar,
 } from "@heroui/react";
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { auth } from "../auth/firebaseSDK"; // Adjust the import path if needed
 
 // Dummy login state (replace with your real logic)
-const isLoggedIn = true; // or false if not logged in
-
 export const AcmeLogo = () => (
   <svg fill="none" height="36" viewBox="0 0 32 32" width="36">
     <path
@@ -33,7 +33,9 @@ export const AcmeLogo = () => (
 );
 
 export default function CustomNavbar() {
-  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [user, setUser] = useState<any>(null);
 
   const menuItems = [
     "Profile",
@@ -47,6 +49,28 @@ export default function CustomNavbar() {
     "Help & Feedback",
     "Log Out",
   ];
+
+  useEffect(() => {
+    // Listen for changes in auth state
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsLoggedIn(true);
+        setUser(user); // Store user info
+      } else {
+        setIsLoggedIn(false);
+        setUser(null); // Clear user info when logged out
+      }
+    });
+
+    // Cleanup on component unmount
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = () => {
+    // Log out the user using Firebase
+    const auth = getAuth();
+    auth.signOut();
+  };
 
   return (
     <Navbar onMenuOpenChange={setIsMenuOpen}>
@@ -99,18 +123,18 @@ export default function CustomNavbar() {
                 as="button"
                 className="transition-transform"
                 color="secondary"
-                name="Jason Hughes"
+                name={user?.displayName || "User"}
                 size="sm"
-                src="https://i.pravatar.cc/150?u=a042581f4e29026704d"
+                src={user?.photoURL || "https://i.pravatar.cc/150?u=a042581f4e29026704d"}
               />
             </DropdownTrigger>
             <DropdownMenu aria-label="Profile Actions" variant="flat">
               <DropdownItem key="profile" className="h-14 gap-2">
                 <p className="font-semibold">Signed in as</p>
-                <p className="font-semibold">zoey@example.com</p>
+                <p className="font-semibold">{user?.email}</p>
               </DropdownItem>
               <DropdownItem key="settings">My Settings</DropdownItem>
-              <DropdownItem key="logout" color="danger">
+              <DropdownItem key="logout" color="danger" onClick={handleLogout}>
                 Log Out
               </DropdownItem>
             </DropdownMenu>
