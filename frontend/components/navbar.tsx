@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 import React, { useState, useEffect } from "react";
 import {
@@ -17,7 +17,7 @@ import {
   DropdownItem,
   Avatar,
 } from "@heroui/react";
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../auth/firebaseSDK"; // Adjust the import path if needed
 
 // Dummy login state (replace with your real logic)
@@ -46,7 +46,7 @@ export default function CustomNavbar() {
     "Team Settings",
     "Help & Feedback",
     "Log Out",
-  ]; // this work please 
+  ]; // this work please
 
   useEffect(() => {
     // Listen for changes in auth state
@@ -123,7 +123,10 @@ export default function CustomNavbar() {
                 color="secondary"
                 name={user?.displayName || "User"}
                 size="sm"
-                src={user?.photoURL || "https://i.pravatar.cc/150?u=a042581f4e29026704d"}
+                src={
+                  user?.photoURL ||
+                  "https://i.pravatar.cc/150?u=a042581f4e29026704d"
+                }
               />
             </DropdownTrigger>
             <DropdownMenu aria-label="Profile Actions" variant="flat">
@@ -149,8 +152,8 @@ export default function CustomNavbar() {
                 index === 2
                   ? "primary"
                   : index === menuItems.length - 1
-                  ? "danger"
-                  : "foreground"
+                    ? "danger"
+                    : "foreground"
               }
               href="#"
               size="lg"

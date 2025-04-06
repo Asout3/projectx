@@ -1,14 +1,16 @@
 "use client";
 
+import React, { useState } from "react";
+
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
 } from "firebase/auth";
+
 import { auth } from "../auth/firebaseSDK";
 
-import React, { useState } from "react";
 
 export default function AuthForm() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -32,35 +34,33 @@ export default function AuthForm() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-  
+
     try {
       if (isSignUp) {
         if (formData.password !== formData.confirmPassword) {
           alert("Passwords do not match");
           return;
         }
-  
+
         const userCredential = await createUserWithEmailAndPassword(
           auth,
           formData.email,
-          formData.password
+          formData.password,
         );
         console.log("User signed up:", userCredential.user);
         alert("Sign up successful!");
-  
       } else {
         const userCredential = await signInWithEmailAndPassword(
           auth,
           formData.email,
-          formData.password
+          formData.password,
         );
         console.log("User logged in:", userCredential.user);
         alert("Login successful!");
       }
-  
+
       // Optional: Reset form after success
       setFormData({ email: "", password: "", confirmPassword: "" });
-  
     } catch (error: any) {
       console.error("Firebase auth error:", error.message);
       alert(error.message);
@@ -69,23 +69,20 @@ export default function AuthForm() {
 
   const handleGoogleSignIn = async () => {
     const provider = new GoogleAuthProvider();
-    
-  
+
     try {
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       const token = credential?.accessToken;
       const user = result.user;
-  
+
       console.log("Google Sign-in user:", user);
       alert("Google Sign-in successful!");
-  
     } catch (error: any) {
       console.error("Google Sign-in error:", error.message);
       alert(error.message);
     }
   };
-  
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-sky-500/50 p-4">
@@ -156,14 +153,14 @@ export default function AuthForm() {
         </p>
         <div className="text-center">
           <p className="text-sm my-2 text-gray-600">OR</p>
-            <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition"
-            >
-                  Sign in with Google
-           </button>
-      </div>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition"
+          >
+            Sign in with Google
+          </button>
+        </div>
       </form>
     </div>
   );
