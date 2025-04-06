@@ -41,14 +41,12 @@ export default function CustomNavbar() {
     "Profile",
     "Dashboard",
     "Activity",
-    "Analytics",
-    "System",
     "Deployments",
     "My Settings",
     "Team Settings",
     "Help & Feedback",
     "Log Out",
-  ];
+  ]; // this work please 
 
   useEffect(() => {
     // Listen for changes in auth state
