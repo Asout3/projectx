@@ -53,17 +53,6 @@ export default function AuthForm() {
           formData.password
         );
 
-        const idToken = await userCredential.user.getIdToken();
-
-        await fetch("http://localhost:4000/auth/sessionLogin", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify({ idToken }),
-        });
-
         console.log("User logged in:", userCredential.user);
         alert("Login successful!");
       }
@@ -80,22 +69,15 @@ export default function AuthForm() {
 
     try {
       const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
-
-      await fetch("http://localhost:4000/auth/sessionLogin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({ idToken }),
-      });
 
       console.log("Google Sign-in user:", result.user);
       alert("Google Sign-in successful!");
+
     } catch (error: any) {
+
       console.error("Google Sign-in error:", error.message);
       alert(error.message);
+
     }
   };
 
@@ -179,3 +161,6 @@ export default function AuthForm() {
     </div>
   );
 }
+
+
+//firebase popup closed by the user 
