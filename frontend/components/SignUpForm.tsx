@@ -1,16 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
 } from "firebase/auth";
-
 import { auth } from "../auth/firebaseSDK";
-
 
 export default function AuthForm() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -45,7 +42,7 @@ export default function AuthForm() {
         const userCredential = await createUserWithEmailAndPassword(
           auth,
           formData.email,
-          formData.password,
+          formData.password
         );
         console.log("User signed up:", userCredential.user);
         alert("Sign up successful!");
@@ -53,13 +50,24 @@ export default function AuthForm() {
         const userCredential = await signInWithEmailAndPassword(
           auth,
           formData.email,
-          formData.password,
+          formData.password
         );
+
+        const idToken = await userCredential.user.getIdToken();
+
+        await fetch("http://localhost:4000/auth/sessionLogin", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({ idToken }),
+        });
+
         console.log("User logged in:", userCredential.user);
         alert("Login successful!");
       }
 
-      // Optional: Reset form after success
       setFormData({ email: "", password: "", confirmPassword: "" });
     } catch (error: any) {
       console.error("Firebase auth error:", error.message);
@@ -72,11 +80,18 @@ export default function AuthForm() {
 
     try {
       const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      const token = credential?.accessToken;
-      const user = result.user;
+      const idToken = await result.user.getIdToken();
 
-      console.log("Google Sign-in user:", user);
+      await fetch("http://localhost:4000/auth/sessionLogin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ idToken }),
+      });
+
+      console.log("Google Sign-in user:", result.user);
       alert("Google Sign-in successful!");
     } catch (error: any) {
       console.error("Google Sign-in error:", error.message);
@@ -120,9 +135,7 @@ export default function AuthForm() {
 
         {isSignUp && (
           <div className="space-y-2">
-            <label className="block text-sm font-medium">
-              Confirm Password
-            </label>
+            <label className="block text-sm font-medium">Confirm Password</label>
             <input
               type="password"
               name="confirmPassword"
@@ -151,6 +164,7 @@ export default function AuthForm() {
             {isSignUp ? "Login" : "Sign up"}
           </button>
         </p>
+
         <div className="text-center">
           <p className="text-sm my-2 text-gray-600">OR</p>
           <button
