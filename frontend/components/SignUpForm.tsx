@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   GoogleAuthProvider,
+  getRedirectResult,
 } from "firebase/auth";
 import { auth } from "../auth/firebaseSDK";
+import { useRouter } from "next/navigation";
 
 export default function AuthForm() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -16,6 +19,8 @@ export default function AuthForm() {
     password: "",
     confirmPassword: "",
   });
+
+  const router = useRouter();
 
   const toggleMode = () => {
     setIsSignUp((prev) => !prev);
@@ -52,7 +57,6 @@ export default function AuthForm() {
           formData.email,
           formData.password
         );
-
         console.log("User logged in:", userCredential.user);
         alert("Login successful!");
       }
@@ -64,22 +68,50 @@ export default function AuthForm() {
     }
   };
 
+  const isIOS = () => {
+    if (typeof window === "undefined") return false;
+    return /iPad|iPhone|iPod/.test(navigator.userAgent);
+  };
+
   const handleGoogleSignIn = async () => {
     const provider = new GoogleAuthProvider();
 
     try {
-      const result = await signInWithPopup(auth, provider);
-
-      console.log("Google Sign-in user:", result.user);
-      alert("Google Sign-in successful!");
-
+      if (isIOS()) {
+        console.log("Using redirect for iOS");
+        await signInWithRedirect(auth, provider);
+      } else {
+        console.log("Trying popup sign-in");
+        await signInWithPopup(auth, provider);
+        router.push("/"); // Success after popup
+      }
     } catch (error: any) {
-
-      console.error("Google Sign-in error:", error.message);
-      alert(error.message);
-
+      if (error.code === "auth/popup-blocked" || error.code === "auth/popup-closed-by-user") {
+        console.warn("Popup failed. Falling back to redirect.");
+        await signInWithRedirect(auth, provider);
+      } else {
+        console.error("Google Sign-in error:", error.message);
+        alert(error.message);
+      }
     }
   };
+
+  const handleRedirectResult = async () => {
+    try {
+      const result = await getRedirectResult(auth);
+      if (result?.user) {
+        console.log("Redirect Sign-in successful:", result.user);
+        alert("Google Sign-in successful!");
+        router.push("/"); // Change to your intended page
+      }
+    } catch (error: any) {
+      console.error("Redirect error:", error.message);
+    }
+  };
+
+  useEffect(() => {
+    handleRedirectResult();
+  }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-sky-500/50 p-4">
@@ -161,6 +193,3 @@ export default function AuthForm() {
     </div>
   );
 }
-
-
-//firebase popup closed by the user 
