@@ -4,7 +4,7 @@
 
     const SignIn = () => {
       const handleGoogleSignIn = () => {
-        signInWithGoogleRed(); // ✅ no await
+        signInWithGoogleRed(); 
       };
     
       return (
