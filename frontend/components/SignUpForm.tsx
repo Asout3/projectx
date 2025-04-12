@@ -1,35 +1,33 @@
 'use client'
-    
-    import { signInWithGoogleRed, auth } from "@/auth/firebaseSDK";
-    import { useEffect } from 'react';
-    import { getRedirectResult } from 'firebase/auth';
 
-    const SignIn = () => {
-      useEffect(() => {
-        const fetchRedirectResult = async () => {
-          await getRedirectResult(auth);
-          try {
-            const response = await getRedirectResult(auth);
-            console.log(response);
-          } catch(error) {
-            console.log('here is the error: ',error);
-          }
-        };
-        fetchRedirectResult();
-      }, []);
-      // const handleGoogleSignIn = async () => {
-      //   const {user} = await signInWithGoogleRed();
-      //   console.log({user}); 
-      // };
-    
-      return (
-        <div>
-          <button type="button" onClick={signInWithGoogleRed}>
-            Google Try
-          </button>
-        </div>
-      );
+import { signInWithGoogleRed, auth } from "@/auth/firebaseSDK";
+import { useEffect } from 'react';
+import { getRedirectResult } from 'firebase/auth';
+
+const SignIn = () => {
+  useEffect(() => {
+    const fetchRedirectResult = async () => {
+      // Adding a small delay to make sure the redirect result is processed
+      setTimeout(async () => {
+        try {
+          const response = await getRedirectResult(auth);
+          console.log(response);
+        } catch (error) {
+          console.log('Error retrieving redirect result: ', error);
+        }
+      }, 200);  // Adjust delay if needed (100ms to 300ms)
     };
-    
-    export default SignIn;
-    
+
+    fetchRedirectResult();
+  }, []);
+
+  return (
+    <div>
+      <button type="button" onClick={signInWithGoogleRed}>
+        Sign in with Google
+      </button>
+    </div>
+  );
+};
+
+export default SignIn;
