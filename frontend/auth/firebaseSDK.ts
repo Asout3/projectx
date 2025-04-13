@@ -1,11 +1,9 @@
-import { initializeApp } from "firebase/app";
+// Import the functions you need from the SDKs you need
+import { FirebaseApp, initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 
-import { getAuth,
-         signInWithRedirect,
-         //signInWithPopup,
-         GoogleAuthProvider,
-         //signInWithPopup,
-} from "firebase/auth";
+
+
 
 const firebaseConfig = {
 
@@ -26,14 +24,11 @@ const firebaseConfig = {
 };
 
 
+
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-
-const provider = new GoogleAuthProvider();
-
-provider.setCustomParameters({
-  prompt: "select_account", 
-});
-
 export const auth = getAuth(app);
-export const signInWithGoogleRed = () => signInWithRedirect(auth, provider);
+
+function customGetAuth(app: FirebaseApp) {
+  throw new Error("Function not implemented.");
+}

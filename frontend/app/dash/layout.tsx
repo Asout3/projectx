@@ -41,8 +41,6 @@ export default function DashboardLayout({
 
   return (
     <div>
-      {/* Include shared UI here e.g., a navbar */}
-
       <div className="mt-20">{children}</div>
     </div>
   );
