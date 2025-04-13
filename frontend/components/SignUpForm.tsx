@@ -12,8 +12,13 @@ const SignIn = () => {
       setTimeout(async () => {
         try {
           const response = await getRedirectResult(auth);
-          console.log(response);
-          console.log('it seems like it might work')
+          if(!response) {
+            console.log("haha nah it do u think");
+          } else {
+            console.log('bithc it works')
+          }
+
+          
         } catch (error) {
           console.log('Error retrieving redirect result: ', error);
           console.log('bitch');
