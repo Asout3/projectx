@@ -11,7 +11,7 @@ export default function PromptSender() {
 
   const sendPrompt = async () => {
     try {
-      const res = await axios.post('https://animated-parakeet-v6qgvrg4r59x2w4j5-5000.app.github.dev/api/data', { prompt });
+      const res = await axios.post('http://localhost:5000/api/data', { prompt });
       setResponse(res.data.reply);
     } catch (error) {
       setResponse('Error: Failed to get AI response.');
@@ -30,7 +30,7 @@ export default function PromptSender() {
 
     try {
       const res = await axios.post(
-        'https://animated-parakeet-v6qgvrg4r59x2w4j5-5000.app.github.dev/api/generateBookPDF',
+        'http://localhost:5000/api/generateBookPDF',
         { prompt },
         {
           responseType: 'blob',
@@ -84,13 +84,13 @@ export default function PromptSender() {
           disabled={isGeneratingPDF}
           className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50"
         >
-          {isGeneratingPDF ? `Generating PDF (${pdfProgress}%)` : 'Download Full Guide (PDF)'}
+          {isGeneratingPDF ? `Generating PDF (${pdfProgress}%)` : 'Download Full Guide (PDF)'} this is the btn lets see 
         </button>
       </div>
 
       {response && (
         <div className="p-4 bg-gray-100 rounded-lg whitespace-pre-wrap">
-          <h2 className="font-bold mb-2">AI Response:</h2>
+          <h2 className="font-bold mb-2">AI Response: bitch</h2>
           <p>{response}</p>
         </div>
       )}

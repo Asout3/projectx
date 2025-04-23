@@ -126,7 +126,7 @@ export async function generateBook(bookTopic) {
     const prompts = [
       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 4 chapters with 400+ words per subtopic.`,
       "Now write Chapter 1 in detail.",
-      "Now write Chapter 2 in detail.",
+      "Now write Chapter 2 in detail. okay does this really run  ",
       "Now write Chapter 3 in detail.",
       "Now write Chapter 4 in detail.",
       "Now conclude the book and provide references and additional resources."

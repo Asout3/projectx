@@ -3,7 +3,7 @@ const cors = require('cors');
 const http = require('http');
 const apiRoutes = require('./routes/api');
 
-
+// hello this is mikiyas 
 require('dotenv').config();
 
 const app = express();
@@ -13,13 +13,14 @@ const server = http.createServer(app);
 
 
 app.use(cors({
-    origin: ['https://animated-parakeet-v6qgvrg4r59x2w4j5-3000.app.github.dev/'],
-    methods: ['POST','OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    //allowedHeaders: ['Content-Type'],
-    exposedHeaders: ['Content-Disposition']
-    //credentials: true
-  }));
+  origin: 'http://localhost:3000',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Disposition']
+}));
+
+//app.options('*', cors()); // <--- allow preflight requests
+
 
 app.use(express.json());
 
@@ -27,13 +28,14 @@ const PORT = process.env.PORT;  // 5000
 
 // Use the routes
 app.use('/api', apiRoutes);
-// app.use((req, res, next) => {
-//     if (req.method === 'OPTIONS') {
-//       return res.sendStatus(200);
-//     }
-//     next();
-//   });
-// 
+
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
 
 //'0.0.0.0',
 
@@ -50,3 +52,4 @@ process.on('SIGINT', () => {
         process.exit(0);
     })
 })
+

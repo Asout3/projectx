@@ -19,13 +19,13 @@ exports.generateBookPDF = async (req, res) => {
     if (!fs.existsSync(pdfPath)) {
       return res.status(500).json({ error: 'PDF generation failed' });
     }
-    
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename=workout_guide.pdf');
-    
+
     const fileStream = fs.createReadStream(pdfPath);
     fileStream.pipe(res);
-    
+
     fileStream.on('end', () => {
       fs.unlinkSync(pdfPath); // Cleanup
     });
