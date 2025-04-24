@@ -13,7 +13,7 @@ const server = http.createServer(app);
 
 
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'https://bookgenai.vercel.app',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Disposition']
