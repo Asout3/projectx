@@ -11,7 +11,7 @@ export default function PromptSender() {
 
   const sendPrompt = async () => {
     try {
-      const res = await axios.post('http://localhost:5000/api/data', { prompt });
+      const res = await axios.post('https://projectx-c5md.onrender.com/api/data', { prompt });
       setResponse(res.data.reply);
     } catch (error) {
       setResponse('Error: Failed to get AI response.');
@@ -30,7 +30,7 @@ export default function PromptSender() {
 
     try {
       const res = await axios.post(
-        'http://localhost:5000/api/generateBookPDF',
+        'https://projectx-c5md.onrender.com/api/generateBookPDF',
         { prompt },
         {
           responseType: 'blob',
