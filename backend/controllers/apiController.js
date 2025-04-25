@@ -1,37 +1,31 @@
-// File: controllers/apiController.js
+// controllers/apiController.js
 const fs = require('fs');
 const path = require('path');
-const { askAI, generateBook } = require('../AI/ai');
-
-exports.sendData = async (req, res) => {
-  try {
-    const reply = await askAI(req.body.prompt);
-    res.json({ reply });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get AI response' });
-  }
-};
+const { generateBook } = require('../AI/ai'); // or wherever your PDF-gen logic lives
 
 exports.generateBookPDF = async (req, res) => {
   try {
-    const pdfPath = await generateBook(req.body.prompt); // Pass user prompt
-    
+    // 1) Generate the PDF and get back its filepath
+    const pdfPath = await generateBook(req.body.prompt);
     if (!fs.existsSync(pdfPath)) {
       return res.status(500).json({ error: 'PDF generation failed' });
     }
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename=workout_guide.pdf');
-
-    const fileStream = fs.createReadStream(pdfPath);
-    fileStream.pipe(res);
-
-    fileStream.on('end', () => {
-      fs.unlinkSync(pdfPath); // Cleanup
+    // 2) Download it—Express will set Content-Type and Content-Disposition
+    res.download(pdfPath, 'book.pdf', (err) => {
+      if (err) {
+        console.error('Error sending PDF:', err);
+        // If headers already sent, cannot change status; otherwise:
+        if (!res.headersSent) res.sendStatus(500);
+      }
+      // 3) Cleanup the file once the response is done
+      fs.unlink(pdfPath, (unlinkErr) => {
+        if (unlinkErr) console.error('Error deleting PDF:', unlinkErr);
+      });
     });
-    res.status(200).json({ message: "Success" });
-  } catch (err) {
-    console.error('PDF error:', err);
+
+  } catch (error) {
+    console.error('PDF generation error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 };
