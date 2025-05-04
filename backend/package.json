@@ -16,6 +16,7 @@
     "express": "^5.1.0",
     "html-pdf": "^3.0.1",
     "marked": "^15.0.8",
+    "puppeteer": "^24.8.0",
     "together-ai": "^0.15.0"
   }
 }

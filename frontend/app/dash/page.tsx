@@ -4,7 +4,7 @@ import { useState } from 'react';
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: "https://projectx-c5md.onrender.com", // e.g. https://projectx-c5md.onrender.com
+  baseURL: "https://projectx-c5md.onrender.com", //the main baseURL is https://projectx-c5md.onrender.com"
   headers: {
     'Content-Type': 'application/json'
   }
@@ -15,6 +15,8 @@ export default function PromptSender() {
   const [response, setResponse] = useState('');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [pdfProgress, setPdfProgress] = useState(0);
+  const [pdfLink, setPdfLink] = useState(null); // State for storing the generated PDF link
+  const [pdfFileName, setPdfFileName] = useState(''); // State for storing the generated PDF filename
 
   const sendPrompt = async () => {
     if (!prompt.trim()) {
@@ -53,11 +55,12 @@ export default function PromptSender() {
 
       const blob = new Blob([res.data], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${prompt.slice(0,20).replace(/\s+/g,'_') || 'book'}.pdf`;
-      link.click();
-      URL.revokeObjectURL(url);
+      const fileName = `${prompt.slice(0, 20).replace(/\s+/g, '_') || 'book'}.pdf`;
+      
+      // Set the link and filename for later use
+      setPdfLink(url);
+      setPdfFileName(fileName);
+
     } catch (err: any) {
       console.error(err);
       if (err.isAxiosError && err.response?.status === 0) {
@@ -77,7 +80,7 @@ export default function PromptSender() {
         rows={5}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        placeholder="E.g., 'hahaha'"
+        placeholder="generate me a book about cats"
       />
       <div className="flex gap-2 mb-4">
         <button
@@ -97,12 +100,31 @@ export default function PromptSender() {
         </button>
       </div>
 
-      {response && (
-        <div className="p-4 bg-gray-100 rounded-lg whitespace-pre-wrap">
-          <h2 className="font-bold mb-2">AI Response</h2>
-          <p>{response}</p>
+      {/* Display the PDF download link only after the PDF is generated */}
+      {pdfLink && (
+        <div className="mt-4">
+          <a 
+            href={pdfLink} 
+            download={pdfFileName} 
+            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded inline-block"
+          >
+            Download Your Guide (PDF)
+          </a>
+        </div>
+      )}
+
+      {/* Display a progress bar for generating the PDF */}
+      {isGeneratingPDF && (
+        <div className="mt-2">
+          <div className="bg-gray-300 rounded-full h-2.5 w-full">
+            <div
+              className="bg-blue-500 h-2.5 rounded-full"
+              style={{ width: `${pdfProgress}%` }}
+            />
+          </div>
         </div>
       )}
     </div>
   );
 }
+

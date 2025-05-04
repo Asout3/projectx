@@ -13,13 +13,12 @@ const server = http.createServer(app);
 
 
 app.use(cors({
-  origin: 'https://bookgenai.vercel.app',
+  origin:'https://bookgenai.vercel.app', // here is the main origin  'https://bookgenai.vercel.app' 
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Disposition']
 }));
 
-//app.options('*', cors()); // <--- allow preflight requests
 
 
 app.use(express.json());
@@ -52,6 +51,4 @@ process.on('SIGINT', () => {
         process.exit(0);
     })
 })
-
-// this seems like it would work
 

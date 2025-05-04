@@ -32,3 +32,5 @@ export const auth = getAuth(app);
 function customGetAuth(app: FirebaseApp) {
   throw new Error("Function not implemented.");
 }
+
+// this is the fukcing code

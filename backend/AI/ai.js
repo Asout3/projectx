@@ -2,7 +2,8 @@
 
 import { Together } from "together-ai";
 import { marked } from 'marked';
-import pdf from 'html-pdf';
+import puppeteer from 'puppeteer';
+//import pdf from 'html-pdf';
 import fs from 'fs';
 import path from 'path';
 
@@ -105,13 +106,86 @@ async function generateChapter(prompt, chapterNum) {
 
 // === PDF Generator ===
 async function generatePDF(content, outputPath) {
-  const html = `<html><body>${marked.parse(content)}</body></html>`;
-  return new Promise((resolve, reject) => {
-    pdf.create(html, { format: 'A4' }).toFile(outputPath, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
+
+  //const html = `<html><body>${marked.parse(content)}</body></html>`;
+  //return new Promise((resolve, reject) => {
+    ///pdf.create(html, { format: 'A4' }).toFile(outputPath, (err) => {
+  //if (err) reject(err);
+     // else resolve();
+    //});
+  //});
+
+
+   const html = 
+    `<html>
+      <style>
+        @page {
+          margin: 50px 40px; /* top/bottom, left/right */
+        }
+        body {
+          font-family: Arial, sans-serif;
+          line-height: 1.6;
+          padding: 0;
+          font-size: 14px;
+          color: #333;
+        }
+        h1, h2, h3 {
+          margin-top: 2em;
+          margin-bottom: 0.5em;
+        }
+        p {
+          margin: 1em 0;
+        }
+        pre {
+          background: #f5f5f5;
+          padding: 12px;
+          border-radius: 5px;
+          overflow-x: auto;
+          margin-bottom: 1em;
+          white-space: pre-wrap; 
+          word-wrap: break-word; 
+        }
+        code {
+          font-family: Consolas, monospace;
+        }
+        ul, ol {
+          margin-left: 25px;
+        }
+        li {
+          margin-bottom: 5px;
+        }
+        strong {
+          font-weight: bold;
+        }
+      </style>
+      <body>${marked.parse(content)}</body>
+      </html>`;
+
+  // Launch Puppeteer browser
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+
+  // Set the content and wait for page load
+  await page.setContent(html);
+  await page.emulateMediaType('screen');
+
+  // Generate PDF and save it
+  await page.pdf({
+    path: outputPath,
+    format: 'A4',
+     border: {
+    top: '50px',
+    bottom: '50px',
+    left: '40px',
+    right: '40px'
+  },
+    printBackground: true,
   });
+
+  // Close the browser
+  await browser.close();
+
+
 }
 
 // === Main Function ===
@@ -124,11 +198,12 @@ export async function generateBook(bookTopic) {
     }];
 
     const prompts = [
-      `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 4 chapters with 400+ words per subtopic.`,
+      `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 5 chapters with 400+ words per subtopic.`,
       "Now write Chapter 1 in detail.",
       "Now write Chapter 2 in detail. okay does this really run  ",
       "Now write Chapter 3 in detail.",
       "Now write Chapter 4 in detail.",
+      "Now write Chapter 5 in detail.",
       "Now conclude the book and provide references and additional resources."
     ];
 
@@ -151,4 +226,6 @@ export async function generateBook(bookTopic) {
     console.error(' Book generation failed:', error);
     throw error;
   }
-}
+}  
+
+// hello who the fuck is this
