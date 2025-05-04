@@ -15,8 +15,8 @@ export default function PromptSender() {
   const [response, setResponse] = useState('');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [pdfProgress, setPdfProgress] = useState(0);
-  const [pdfLink, setPdfLink] = useState(null); // State for storing the generated PDF link
-  const [pdfFileName, setPdfFileName] = useState(''); // State for storing the generated PDF filename
+  const [pdfLink, setPdfLink] = useState<string | null>(null); // State for storing the generated PDF link
+  const [pdfFileName, setPdfFileName] = useState<string | null>(null); // State for storing the generated PDF filename
 
   const sendPrompt = async () => {
     if (!prompt.trim()) {
