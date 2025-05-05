@@ -124,9 +124,13 @@ async function generatePDF(content, outputPath) {
           margin: 50px 40px; /* top/bottom, left/right */
         }
         body {
+         margin: 0;
+         padding: 0;
+        }
+        .wrapper {
           font-family: Arial, sans-serif;
           line-height: 1.6;
-          padding: 50px 40px;
+          padding: 80px 60px;
           font-size: 14px;
           color: #333;
         }
