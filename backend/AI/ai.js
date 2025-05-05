@@ -126,7 +126,7 @@ async function generatePDF(content, outputPath) {
         body {
           font-family: Arial, sans-serif;
           line-height: 1.6;
-          padding: 0;
+          padding: 50px 40px;
           font-size: 14px;
           color: #333;
         }
