@@ -162,10 +162,14 @@ async function generatePDF(content, outputPath) {
       </html>`;
 
   // Launch Puppeteer browser
-  const browser = await puppeteer.launch({
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  headless: true,
-});
+  const browser = await puppeteer.launch(args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--single-process'
+  ],
+  executablePath:'/usr/bin/chromium-browser'
+  ); // add it to dotenv process.env.PUPPETEER_EXECUTABLE_PATH
   const page = await browser.newPage();
 
   // Set the content and wait for page load
