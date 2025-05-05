@@ -2,7 +2,8 @@
 
 import { Together } from "together-ai";
 import { marked } from 'marked';
-import puppeteer from 'puppeteer';
+import html_to_pdf from 'html-pdf-node';
+//import puppeteer from 'puppeteer';
 //import pdf from 'html-pdf';
 import fs from 'fs';
 import path from 'path';
@@ -161,31 +162,20 @@ async function generatePDF(content, outputPath) {
       <body>${marked.parse(content)}</body>
       </html>`;
 
-  // Launch Puppeteer browser
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
-
-  // Set the content and wait for page load
-  await page.setContent(html);
-  await page.emulateMediaType('screen');
-
-  // Generate PDF and save it
-  await page.pdf({
-    path: outputPath,
+      const file = { content: html };
+  const options = {
     format: 'A4',
-     border: {
+    border: {
     top: '50px',
     bottom: '50px',
     left: '40px',
     right: '40px'
   },
+    path: outputPath,
     printBackground: true,
-  });
+  };
 
-  // Close the browser
-  await browser.close();
-
-
+  await html_to_pdf.generatePdf(file, options);
 }
 
 // === Main Function ===
