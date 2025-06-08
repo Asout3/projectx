@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import axios from 'axios';
-import Greet from '../../components/greet.tsx';
+import Greet from '../../components/greet';
 
 const api = axios.create({
   baseURL: "https://projectx-c5md.onrender.com", //the main baseURL is https://projectx-c5md.onrender.com"
