@@ -4,9 +4,14 @@ const router = express.Router();
 
 //router.post('/data', sendData);
 
-const { generateBookPDF } = require('../controllers/apiController');
+const { generateBookSmall, generateResearchPaper, generateBookMed, generateBookLong, generateResearchPaperLong } = require('../controllers/apiController');
 
 //router.post('/data', sendData);
-router.post('/generateBookPDF', generateBookPDF);
+
+router.post('/generateBookSmall', generateBookSmall);
+router.post('/generateResearchPaper', generateResearchPaper);
+router.post('/generateBookMed', generateBookMed);
+router.post('/generateBookLong', generateBookLong);
+router.post('/generateResearchPaperLong', generateResearchPaperLong);
 
 module.exports = router;

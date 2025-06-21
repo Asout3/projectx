@@ -190,7 +190,7 @@ export async function generateBook(bookTopic) {
     const prompts = [
       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 5 chapters with 400+ words per subtopic.`,
       "Now write Chapter 1 in detail.",
-      "Now write Chapter 2 in detail. okay does this really run  ",
+      "Now write Chapter 2 in detail.",
       "Now write Chapter 3 in detail.",
       "Now write Chapter 4 in detail.",
       "Now write Chapter 5 in detail.",
@@ -216,6 +216,49 @@ export async function generateBook(bookTopic) {
     console.error(' Book generation failed:', error);
     throw error;
   }
-}  
+} 
 
-// hello who the fuck is this
+
+// export async function generateMedBook(bookTopic) {
+//   try {
+//     conversationHistory = [{
+//       role: "system",
+//       content:
+//         "You are Hailu, an expert writer and researcher. You specialize in creating detailed, well-structured and very explanatory books with at least 400 words per subtopic. Make sure you explain every single detail before moving to the next one. Always begin with a Table of Contents."
+//     }];
+//
+//     const prompts = [
+//       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 10 chapters with 400+ words per subtopic.`,
+//       "Now write Chapter 1 in detail.",
+//       "Now write Chapter 2 in detail.",
+//       "Now write Chapter 3 in detail.",
+//       "Now write Chapter 4 in detail.",
+//       "Now write Chapter 5 in detail.",
+//       "Now write Chapter 6 in detail.",
+//       "Now write Chapter 7 in detail.",
+//       "Now write Chapter 8 in detail.",
+//       "Now write Chapter 9 in detail.",
+//       "Now write Chapter 10 in detail.",
+//       "Now conclude the book and provide references and additional resources."
+//     ];
+//
+//     const chapterFiles = [];
+//     for (const [index, prompt] of prompts.entries()) {
+//       const chapterNum = index + 1;
+//       console.log(`\n Generating Chapter ${chapterNum}`);
+//       chapterFiles.push(await generateChapter(prompt, chapterNum));
+//     }
+//
+//     const combinedContent = combineChapters(chapterFiles);
+//     await generatePDF(combinedContent, OUTPUT_PDF);
+//
+//     // Optional Cleanup
+//     chapterFiles.forEach(deleteFile);
+//
+//     console.log(`\n Book generation complete. Output: ${OUTPUT_PDF}`);
+//     return OUTPUT_PDF;
+//   } catch (error) {
+//     console.error(' Book generation failed:', error);
+//     throw error;
+//   }
+// }  
