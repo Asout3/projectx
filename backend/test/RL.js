@@ -290,7 +290,7 @@ export async function generatePDF(content, outputPath) {
 
 // === Main Function ===
 
-export async function generateResearchPaper(topic, userId, pageLength = 50) {
+export async function generateResearchPaperLongg(topic, userId, pageLength = 50) {
   try {
     console.log(`📄 Generating research paper for user: ${userId} with topic: "${topic}"`);
 
