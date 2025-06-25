@@ -290,7 +290,7 @@ export async function generatePDF(content, outputPath) {
 }
 
 // === Master Function ===
-export async function generateBookMed(bookTopic, userId) {
+export async function generateBookMedd(bookTopic, userId) {
   try {
     console.log(`📚 Generating book for user: ${userId} with topic: ${bookTopic}`);
 
