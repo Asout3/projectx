@@ -14,7 +14,7 @@ const server = http.createServer(app);
 
 
 app.use(cors({
-  origin:'https://bookgenai.vercel.app', // here is the main origin  'https://bookgenai.vercel.app' 
+  origin:'https://triumphant-possibility.up.railway.app', // here is the main origin  'https://bookgenai.vercel.app' 
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Disposition']
