@@ -16,8 +16,6 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "highlight.js": "^11.11.1",
-    "html-pdf": "^3.0.1",
-    "html-pdf-node": "^1.0.8",
     "marked": "^15.0.12",
     "puppeteer": "^24.10.1",
     "together-ai": "^0.15.2"
