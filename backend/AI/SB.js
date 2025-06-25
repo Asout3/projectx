@@ -1,7 +1,8 @@
 import { Together } from "together-ai";
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -236,9 +237,9 @@ export async function generatePDF(content, outputPath) {
   `;
 
   const browser = await puppeteer.launch({
-  executablePath: '/opt/render/.cache/puppeteer/chrome/linux-137.0.7151.70/chrome',
-  headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox']
+  executablePath: await chromium.executablePath(),
+  headless: chromium.headless,
+  args: chromium.args,
 });
 
   const page = await browser.newPage();
