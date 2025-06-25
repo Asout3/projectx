@@ -1,17 +1,19 @@
-const express = require('express');
+import express from 'express';
+import {
+  generateBookSmall,
+  generateResearchPaper,
+  generateBookMed,
+  generateBookLong,
+  generateResearchPaperLong
+} from '../controllers/apiController.js'; // Note the .js extension
+
 const router = express.Router();
-//const { sendData } = require('../controllers/apiController');
 
-//router.post('/data', sendData);
-
-const { generateBookSmall, generateResearchPaper, generateBookMed, generateBookLong, generateResearchPaperLong } = require('../controllers/apiController');
-
-//router.post('/data', sendData);
-
+// Define routes
 router.post('/generateBookSmall', generateBookSmall);
 router.post('/generateResearchPaper', generateResearchPaper);
 router.post('/generateBookMed', generateBookMed);
 router.post('/generateBookLong', generateBookLong);
 router.post('/generateResearchPaperLong', generateResearchPaperLong);
 
-module.exports = router;
+export default router;
