@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { generateBookS } from '../AI/SB.js';
-import { generateBookMed } from '../AI/MB.js';
+import { generateBookMedd } from '../AI/MB.js';
 import { generateBookL } from '../AI/LB.js';
 import { generateResearchPaper } from '../test/RS.js';
 import { generateResearchPaperLong } from '../test/RL.js';
@@ -38,7 +38,7 @@ export async function generateBookMed(req, res) {
     const { prompt, userId } = req.body;
     console.log("📨 Medium Book Request from", userId, ":", prompt);
 
-    const pdfPath = await generateBookMed(prompt, userId);
+    const pdfPath = await generateBookMedd(prompt, userId);
 
     if (!fs.existsSync(pdfPath)) {
       return res.status(500).json({ error: 'PDF generation failed' });
