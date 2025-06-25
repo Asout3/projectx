@@ -1,10 +1,11 @@
-const express = require('express');
-const cors = require('cors');
-const http = require('http');
-const apiRoutes = require('./routes/api');
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import apiRoutes from './routes/api.js';  // Note the added .js extension
 
 // hello this is mikiyas 
-require('dotenv').config();
+import dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
