@@ -4,6 +4,7 @@
     "buildCommand": "cd backend && npm install"
   },
   "start": {
-    "command": "cd backend && node server.js"
+    "command": "npm start",
+    "cwd": "backend"
   }
 }
