@@ -4,7 +4,7 @@ import { generateBookS } from '../AI/SB.js';
 import { generateBookMedd } from '../AI/MB.js';
 import { generateBookL } from '../AI/LB.js';
 import { generateResearchPaperS } from '../test/RS.js';
-import { generateResearchPaperLong } from '../test/RL.js';
+import { generateResearchPaperLongg } from '../test/RL.js';
 
 export async function generateBookSmall(req, res) {
   try {
@@ -119,7 +119,7 @@ export async function generateResearchPaperLong(req, res) {
     const { prompt, userId } = req.body;
     console.log("📨 Long Research Paper Request from", userId, ":", prompt);
 
-    const pdfPath = await generateResearchPaperLong(prompt, userId);
+    const pdfPath = await generateResearchPaperLongg(prompt, userId);
 
     if (!fs.existsSync(pdfPath)) {
       return res.status(500).json({ error: 'PDF generation failed' });
