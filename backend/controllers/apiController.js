@@ -3,7 +3,7 @@ import path from 'path';
 import { generateBookS } from '../AI/SB.js';
 import { generateBookMedd } from '../AI/MB.js';
 import { generateBookL } from '../AI/LB.js';
-import { generateResearchPaper } from '../test/RS.js';
+import { generateResearchPaperS } from '../test/RS.js';
 import { generateResearchPaperLong } from '../test/RL.js';
 
 export async function generateBookSmall(req, res) {
@@ -92,7 +92,7 @@ export async function generateResearchPaper(req, res) {
     const { prompt, userId } = req.body;
     console.log("📨 Research Paper Request from", userId, ":", prompt);
 
-    const pdfPath = await generateResearchPaper(prompt, userId);
+    const pdfPath = await generateResearchPaperS(prompt, userId);
 
     if (!fs.existsSync(pdfPath)) {
       return res.status(500).json({ error: 'PDF generation failed' });
