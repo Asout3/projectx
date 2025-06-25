@@ -1,12 +1,12 @@
-const fs = require('fs');
-const path = require('path');
-const { generateBookS } = require('../AI/SB');
-const { generateBookMed } = require('../AI/MB');
-const { generateBookL } = require('../AI/LB');
-const { generateResearchPaper } = require('../test/RS');
-const { generateResearchPaperLong } = require('../test/RL');
+import fs from 'fs';
+import path from 'path';
+import { generateBookS } from '../AI/SB.js';
+import { generateBookMed } from '../AI/MB.js';
+import { generateBookL } from '../AI/LB.js';
+import { generateResearchPaper } from '../test/RS.js';
+import { generateResearchPaperLong } from '../test/RL.js';
 
-exports.generateBookSmall = async (req, res) => {
+export async function generateBookSmall(req, res) {
   try {
     const { prompt, userId } = req.body;
     console.log("📨 Small Book Request from", userId, ":", prompt);
@@ -31,9 +31,9 @@ exports.generateBookSmall = async (req, res) => {
     console.error('PDF generation error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
-};
+}
 
-exports.generateBookMed = async (req, res) => {
+export async function generateBookMed(req, res) {
   try {
     const { prompt, userId } = req.body;
     console.log("📨 Medium Book Request from", userId, ":", prompt);
@@ -58,9 +58,9 @@ exports.generateBookMed = async (req, res) => {
     console.error('PDF generation error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
-};
+}
 
-exports.generateBookLong = async (req, res) => {
+export async function generateBookLong(req, res) {
   try {
     const { prompt, userId } = req.body;
     console.log("📨 Long Book Request from", userId, ":", prompt);
@@ -85,9 +85,9 @@ exports.generateBookLong = async (req, res) => {
     console.error('PDF generation error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
-};
+}
 
-exports.generateResearchPaper = async (req, res) => {
+export async function generateResearchPaper(req, res) {
   try {
     const { prompt, userId } = req.body;
     console.log("📨 Research Paper Request from", userId, ":", prompt);
@@ -112,9 +112,9 @@ exports.generateResearchPaper = async (req, res) => {
     console.error('Research paper generation error:', error);
     res.status(500).json({ error: 'Failed to generate research paper' });
   }
-};
+}
 
-exports.generateResearchPaperLong = async (req, res) => {
+export async function generateResearchPaperLong(req, res) {
   try {
     const { prompt, userId } = req.body;
     console.log("📨 Long Research Paper Request from", userId, ":", prompt);
@@ -139,4 +139,4 @@ exports.generateResearchPaperLong = async (req, res) => {
     console.error('Research paper generation error:', error);
     res.status(500).json({ error: 'Failed to generate research paper' });
   }
-};
+}
