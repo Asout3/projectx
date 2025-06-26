@@ -292,40 +292,66 @@ export async function generatePDF(content, outputPath) {
 // === Master Function ===
 export async function generateBookMedd(bookTopic, userId) {
   try {
-    console.log(`📚 Generating book for user: ${userId} with topic: ${bookTopic}`);
+    console.log(`📚 Generating MEDIUM book for user: ${userId} with topic: ${bookTopic}`);
 
-    conversationHistory = [{
+    // Isolated history for this request only
+    let conversationHistory = [{
       role: "system",
       content:
-        "You are Hailu, an expert writer and researcher. You specialize in creating detailed, well-structured and very explanatory books with at least 400 words per subtopic. Make sure you explain every single detail before moving to the next one. Always begin with a Table of Contents."
+        "You are Hailu, an expert writer and researcher. You specialize in writing medium-sized books that are detailed but slightly more concise than long-form versions. Aim for about 700-800 words per chapter. Begin with a Table of Contents."
     }];
 
+    async function askAI(prompt) {
+      const trimmedHistory = trimHistory(conversationHistory);
+      const messages = [...trimmedHistory, { role: 'user', content: prompt }];
+
+      const response = await together.chat.completions.create({
+        messages,
+        model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+        max_tokens: 3000,
+        temperature: 0.8,
+      });
+
+      let reply = response.choices[0].message.content
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
+        .trim();
+
+      conversationHistory.push({ role: 'user', content: prompt });
+      conversationHistory.push({ role: 'assistant', content: reply });
+
+      return reply;
+    }
+
+    async function generateChapter(prompt, chapterNum) {
+      const chapterText = await askAI(prompt);
+      const filename = `${CHAPTER_PREFIX}-med-${userId}-${chapterNum}.txt`;
+      saveToFile(filename, chapterText);
+      return filename;
+    }
+
     const prompts = [
-       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 10 chapters with 400+ words per subtopic.`,
-       "Now write Chapter 1 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 2 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 3 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 4 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 5 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 6 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 7 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 8 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 9 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now write Chapter 10 in detail. and Use proper and same mark down to represent each chapter title.",
-       "Now conclude the book and provide references and additional resources."
-     ];
+      `[User Request]: ${bookTopic}\n\nAs Hailu, create a table of contents for a medium-length book. Include 6 chapters.`,
+      "Now write Chapter 1 in detail.",
+      "Now write Chapter 2 in detail.",
+      "Now write Chapter 3 in detail.",
+      "Now write Chapter 4 in detail.",
+      "Now write Chapter 5 in detail.",
+      "Now write Chapter 6 in detail.",
+      "Now conclude the book and provide references or recommendations."
+    ];
 
     const chapterFiles = [];
     for (const [index, prompt] of prompts.entries()) {
       const chapterNum = index + 1;
-      console.log(`\n📘 Generating Chapter ${chapterNum}`);
+      console.log(`📘 (MED) Generating Chapter ${chapterNum}`);
       chapterFiles.push(await generateChapter(prompt, chapterNum));
     }
 
     const combinedContent = combineChapters(chapterFiles);
 
     const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
-    const fileName = `output_${userId}_${safeTopic}.pdf`;
+    const fileName = `output_med_${userId}_${safeTopic}.pdf`;
     const outputDir = path.join(__dirname, '../pdfs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
@@ -334,11 +360,11 @@ export async function generateBookMedd(bookTopic, userId) {
 
     chapterFiles.forEach(deleteFile);
 
-    console.log(`\n✅ Book generation complete. Output: ${outputPath}`);
+    console.log(`✅ Medium book generation done. Output: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    console.error('❌ Book generation failed:', error);
+    console.error('❌ Medium book generation failed:', error);
     throw error;
   }
 }
