@@ -272,11 +272,43 @@ export async function generateBookS(bookTopic, userId) {
   try {
     console.log(`📚 Generating book for user: ${userId} with topic: ${bookTopic}`);
 
-    conversationHistory = [{
+    // Each user/request gets their own conversation history
+    let conversationHistory = [{
       role: "system",
       content:
         "You are Hailu, an expert writer and researcher. You specialize in creating detailed, well-structured and very explanatory books with at least 400 words per subtopic. Make sure you explain every single detail before moving to the next one. Always begin with a Table of Contents."
     }];
+
+    // AI interaction scoped to user
+    async function askAI(prompt) {
+      const trimmedHistory = trimHistory(conversationHistory);
+      const messages = [...trimmedHistory, { role: 'user', content: prompt }];
+
+      const response = await together.chat.completions.create({
+        messages,
+        model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+        max_tokens: 3000,
+        temperature: 0.8,
+      });
+
+      let reply = response.choices[0].message.content
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
+        .trim();
+
+      conversationHistory.push({ role: 'user', content: prompt });
+      conversationHistory.push({ role: 'assistant', content: reply });
+
+      return reply;
+    }
+
+    // Generate individual chapter text file
+    async function generateChapter(prompt, chapterNum) {
+      const chapterText = await askAI(prompt);
+      const filename = `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`;
+      saveToFile(filename, chapterText);
+      return filename;
+    }
 
     const prompts = [
       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 5 chapters with 400+ words per subtopic.`,
