@@ -14,7 +14,7 @@ import {
 } from "@heroui/react";
 
 const api = axios.create({
-  baseURL: "https://projectx-c5md.onrender.com", // use your deployed server in production   // main baseURL is https://projectx-c5md.onrender.com
+  baseURL: "https://projectx-production-253c.up.railway.app", // use your deployed server in production   // main baseURL is https://projectx-c5md.onrender.com
   headers: {
     "Content-Type": "application/json",
   },
