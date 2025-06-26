@@ -332,13 +332,17 @@ export async function generateBookMedd(bookTopic, userId) {
 
     const prompts = [
       `[User Request]: ${bookTopic}\n\nAs Hailu, create a table of contents for a medium-length book. Include 6 chapters.`,
-      "Now write Chapter 1 in detail.",
-      "Now write Chapter 2 in detail.",
-      "Now write Chapter 3 in detail.",
-      "Now write Chapter 4 in detail.",
-      "Now write Chapter 5 in detail.",
-      "Now write Chapter 6 in detail.",
-      "Now conclude the book and provide references or recommendations."
+      "Now write Chapter 1 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 2 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 3 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 4 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 5 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 6 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 7 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 8 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 9 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now write Chapter 10 in detail. and Use proper and same mark down to represent each chapter title.",
+      "Now conclude the book and provide references and additional resources."
     ];
 
     const chapterFiles = [];
