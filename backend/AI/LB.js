@@ -294,45 +294,76 @@ export async function generatePDF(content, outputPath) {
 
 export async function generateBookL(bookTopic, userId) {
   try {
-    console.log(`📚 Generating book for user: ${userId} with topic: ${bookTopic}`);
+    console.log(`📚 Generating LONG book for user: ${userId} with topic: ${bookTopic}`);
 
-    conversationHistory = [{
+    // Unique conversation history per request
+    let conversationHistory = [{
       role: "system",
       content:
-        "You are Hailu, an expert writer and researcher. You specialize in creating detailed, well-structured and very explanatory books with at least 400 words per subtopic. Make sure you explain every single detail before moving to the next one. Always begin with a Table of Contents."
+        "You are Hailu, an expert writer and researcher. You specialize in writing long, comprehensive books with deep analysis. Each chapter should be at least 1000 words. Start with a very detailed Table of Contents."
     }];
 
-    const prompts = [
-       `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 15 chapters with 400+ words per subtopic.`,
-       "Now write Chapter 1 in detail.",
-       "Now write Chapter 2 in detail.",
-       "Now write Chapter 3 in detail.",
-       "Now write Chapter 4 in detail.",
-       "Now write Chapter 5 in detail.",
-       "Now write Chapter 6 in detail.",
-       "Now write Chapter 7 in detail.",
-       "Now write Chapter 8 in detail.",
-       "Now write Chapter 9 in detail.",
-       "Now write Chapter 10 in detail.",
-       "Now write Chapter 11 in detail.",
-       "Now write Chapter 12 in detail.",
-       "Now write Chapter 13 in detail.",
-       "Now write Chapter 14 in detail.",
-       "Now write Chapter 15 in detail.",
-       "Now conclude the book and provide references and additional resources."
-     ];
+    async function askAI(prompt) {
+      const trimmedHistory = trimHistory(conversationHistory);
+      const messages = [...trimmedHistory, { role: 'user', content: prompt }];
+
+      const response = await together.chat.completions.create({
+        messages,
+        model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+        max_tokens: 3000,
+        temperature: 0.8,
+      });
+
+      let reply = response.choices[0].message.content
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
+        .trim();
+
+      conversationHistory.push({ role: 'user', content: prompt });
+      conversationHistory.push({ role: 'assistant', content: reply });
+
+      return reply;
+    }
+
+    async function generateChapter(prompt, chapterNum) {
+      const chapterText = await askAI(prompt);
+      const filename = `${CHAPTER_PREFIX}-long-${userId}-${chapterNum}.txt`;
+      saveToFile(filename, chapterText);
+      return filename;
+    }
+
+        const prompts = [
+      `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 15 chapters with 400+ words per subtopic.`,
+      "Now write Chapter 1 in detail.",
+      "Now write Chapter 2 in detail.",
+      "Now write Chapter 3 in detail.",
+      "Now write Chapter 4 in detail.",
+      "Now write Chapter 5 in detail.",
+      "Now write Chapter 6 in detail.",
+      "Now write Chapter 7 in detail.",
+      "Now write Chapter 8 in detail.",
+      "Now write Chapter 9 in detail.",
+      "Now write Chapter 10 in detail.",
+      "Now write Chapter 11 in detail.",
+      "Now write Chapter 12 in detail.",
+      "Now write Chapter 13 in detail.",
+      "Now write Chapter 14 in detail.",
+      "Now write Chapter 15 in detail.",
+      "Now conclude the book and provide references and additional resources."
+    ];
+
 
     const chapterFiles = [];
     for (const [index, prompt] of prompts.entries()) {
       const chapterNum = index + 1;
-      console.log(`\n📘 Generating Chapter ${chapterNum}`);
+      console.log(`📘 (LONG) Generating Chapter ${chapterNum}`);
       chapterFiles.push(await generateChapter(prompt, chapterNum));
     }
 
     const combinedContent = combineChapters(chapterFiles);
 
     const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
-    const fileName = `output_${userId}_${safeTopic}.pdf`;
+    const fileName = `output_long_${userId}_${safeTopic}.pdf`;
     const outputDir = path.join(__dirname, '../pdfs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
@@ -341,11 +372,11 @@ export async function generateBookL(bookTopic, userId) {
 
     chapterFiles.forEach(deleteFile);
 
-    console.log(`\n✅ Book generation complete. Output: ${outputPath}`);
+    console.log(`✅ Long book generation complete. Output: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    console.error('❌ Book generation failed:', error);
+    console.error('❌ Long book generation failed:', error);
     throw error;
   }
 }
