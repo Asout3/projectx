@@ -74,7 +74,7 @@ function deleteFile(filePath) {
   }
 }
 
-function combineChapters(files) {
+export async function combineChapters(files) {
   let combined = '';
   for (const file of files) {
     combined += fs.readFileSync(file, 'utf8') + '\n\n';
