@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { combineChapters, saveToFile, trimHistory } from '../AI/SB.js';
+import { combineChapters } from '../AI/SB.js';
 
 
 // Configuration
