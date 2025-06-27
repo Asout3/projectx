@@ -290,20 +290,45 @@ export async function generatePDF(content, outputPath) {
 
 // === Main Generator ===
 
-export async function generateResearchPaperS(topic, userId, pageLength = 50) {
+export async function generateResearchPaperS(topic, userId) {
   try {
-    console.log(`📄 Generating research paper for user: ${userId} with topic: "${topic}"`);
+    console.log(`📄 Generating SHORT research paper for user: ${userId} with topic: ${topic}`);
 
-    conversationHistory = [{
+    // Isolated history per request
+    let conversationHistory = [{
       role: "system",
       content:
-        "You are Hailu, an expert researcher. You specialize in writing detailed, academic research papers with at least 200 words per section. Generate a research paper on the given topic with the following structure: Abstract, Introduction, Methodology, Findings, Discussion, Conclusion, References. Use an academic tone, avoid speculation, and include plausible examples relevant to the topic. For References, generate 5-10 hypothetical APA sources."
+        "You are Hailu, a professional researcher. Your job is to write a short but well-structured research paper based on the given topic. Include introduction, methodology, analysis, and conclusion."
     }];
 
-    const totalWords = pageLength * 750;
-    const findingsWords = Math.floor(totalWords * 0.5);
-    const findingsParts = Math.ceil(findingsWords / 1500);
-    const findingsWordsPerPart = Math.floor(findingsWords / findingsParts);
+    async function askAI(prompt) {
+      const trimmedHistory = trimHistory(conversationHistory);
+      const messages = [...trimmedHistory, { role: 'user', content: prompt }];
+
+      const response = await together.chat.completions.create({
+        messages,
+        model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+        max_tokens: 3000,
+        temperature: 0.8,
+      });
+
+      let reply = response.choices[0].message.content
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
+        .trim();
+
+      conversationHistory.push({ role: 'user', content: prompt });
+      conversationHistory.push({ role: 'assistant', content: reply });
+
+      return reply;
+    }
+
+    async function generateSection(prompt, sectionNum) {
+      const sectionText = await askAI(prompt);
+      const filename = `research-section-${userId}-${sectionNum}.txt`;
+      saveToFile(filename, sectionText);
+      return filename;
+    }
 
     const prompts = [
       {
@@ -337,40 +362,124 @@ export async function generateResearchPaperS(topic, userId, pageLength = 50) {
     ];
 
     const sectionFiles = [];
-
     for (const [index, prompt] of prompts.entries()) {
       const sectionNum = index + 1;
-      console.log(`\n🧠 Generating Section ${sectionNum}: ${prompt.name}`);
-
-      const context = conversationHistory
-        .filter(msg => msg.role === 'assistant')
-        .slice(-2)
-        .map(msg => msg.content)
-        .join('\n');
-
-      const fullPrompt = sectionNum === 1 ? prompt.text : `${prompt.text}\n\nEarlier context:\n${context}`;
-
-      const sectionPath = await generateSection(fullPrompt, sectionNum, prompt.name);
-      sectionFiles.push(sectionPath);
+      console.log(`📕 (Short Paper) Generating Section ${sectionNum}`);
+      sectionFiles.push(await generateSection(prompt, sectionNum));
     }
 
-    const combinedContent = combineSections(sectionFiles);
+    const combinedContent = combineChapters(sectionFiles);
 
     const safeTopic = topic.slice(0, 20).replace(/\s+/g, "_");
     const fileName = `research_${userId}_${safeTopic}.pdf`;
     const outputDir = path.join(__dirname, '../pdfs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
-    const outputPath = path.join(outputDir, fileName);
 
+    const outputPath = path.join(outputDir, fileName);
     await generatePDF(combinedContent, outputPath);
 
     sectionFiles.forEach(deleteFile);
 
-    console.log(`\n✅ Research paper complete. Output: ${outputPath}`);
+    console.log(`✅ Research paper generated: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    console.error('❌ Research paper generation failed:', error);
+    console.error('❌ Short research paper generation failed:', error);
     throw error;
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+// export async function generateResearchPaperS(topic, userId, pageLength = 50) {
+//   try {
+//     console.log(`📄 Generating research paper for user: ${userId} with topic: "${topic}"`);
+
+//     conversationHistory = [{
+//       role: "system",
+//       content:
+//         "You are Hailu, an expert researcher. You specialize in writing detailed, academic research papers with at least 200 words per section. Generate a research paper on the given topic with the following structure: Abstract, Introduction, Methodology, Findings, Discussion, Conclusion, References. Use an academic tone, avoid speculation, and include plausible examples relevant to the topic. For References, generate 5-10 hypothetical APA sources."
+//     }];
+
+//     const totalWords = pageLength * 750;
+//     const findingsWords = Math.floor(totalWords * 0.5);
+//     const findingsParts = Math.ceil(findingsWords / 1500);
+//     const findingsWordsPerPart = Math.floor(findingsWords / findingsParts);
+
+//     const prompts = [
+//       {
+//         text: `# Abstract\n\nWrite a 200-word abstract for a research paper on "${topic}". First, give the paper a proper title. Summarize the purpose, methods, key findings, and conclusion.`,
+//         name: 'abstract'
+//       },
+//       {
+//         text: `# Introduction\n\nWrite a 600-word introduction for a research paper on "${topic}". Include background, problem statement, objectives, and significance.`,
+//         name: 'introduction'
+//       },
+//       {
+//         text: `# Methodology\n\nWrite a 1000-word methodology section. Use subheadings like "## Data Collection", "## Analysis Techniques", etc.`,
+//         name: 'methodology'
+//       },
+//       {
+//         text: `# Findings\n\nWrite the findings section. Present key findings with markdown formatting and plausible examples.`,
+//         name: 'findings'
+//       },
+//       {
+//         text: `# Discussion\n\nWrite a 1000-word discussion analyzing findings, implications, and limitations.`,
+//         name: 'discussion'
+//       },
+//       {
+//         text: `# Conclusion\n\nWrite a 650-word conclusion summarizing key points and suggesting future research.`,
+//         name: 'conclusion'
+//       },
+//       {
+//         text: `# References\n\nGenerate 5-10 hypothetical APA references. Format them in markdown bullet points.`,
+//         name: 'references'
+//       }
+//     ];
+
+//     const sectionFiles = [];
+
+//     for (const [index, prompt] of prompts.entries()) {
+//       const sectionNum = index + 1;
+//       console.log(`\n🧠 Generating Section ${sectionNum}: ${prompt.name}`);
+
+//       const context = conversationHistory
+//         .filter(msg => msg.role === 'assistant')
+//         .slice(-2)
+//         .map(msg => msg.content)
+//         .join('\n');
+
+//       const fullPrompt = sectionNum === 1 ? prompt.text : `${prompt.text}\n\nEarlier context:\n${context}`;
+
+//       const sectionPath = await generateSection(fullPrompt, sectionNum, prompt.name);
+//       sectionFiles.push(sectionPath);
+//     }
+
+//     const combinedContent = combineSections(sectionFiles);
+
+//     const safeTopic = topic.slice(0, 20).replace(/\s+/g, "_");
+//     const fileName = `research_${userId}_${safeTopic}.pdf`;
+//     const outputDir = path.join(__dirname, '../pdfs');
+//     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
+//     const outputPath = path.join(outputDir, fileName);
+
+//     await generatePDF(combinedContent, outputPath);
+
+//     sectionFiles.forEach(deleteFile);
+
+//     console.log(`\n✅ Research paper complete. Output: ${outputPath}`);
+//     return outputPath;
+
+//   } catch (error) {
+//     console.error('❌ Research paper generation failed:', error);
+//     throw error;
+//   }
+// }
