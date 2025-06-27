@@ -331,7 +331,7 @@ export async function generateBookMedd(bookTopic, userId) {
     }
 
     const prompts = [
-      `[User Request]: ${bookTopic}\n\nAs Hailu, create a table of contents for a medium-length book. Include 6 chapters.`,
+      `[User Request]: ${bookTopic}\n\nAs Hailu, create a table of contents for a medium-length book. Include 10 chapters.`,
       "Now write Chapter 1 in detail. and Use proper and same mark down to represent each chapter title.",
       "Now write Chapter 2 in detail. and Use proper and same mark down to represent each chapter title.",
       "Now write Chapter 3 in detail. and Use proper and same mark down to represent each chapter title.",
