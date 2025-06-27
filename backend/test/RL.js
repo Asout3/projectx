@@ -142,7 +142,7 @@ export async function generateResearchPaperLongg(topic, userId) {
       const response = await together.chat.completions.create({
         messages,
         model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
-        max_tokens: 3000,
+        max_tokens: 2000,
         temperature: 0.8,
       });
 
@@ -161,8 +161,8 @@ export async function generateResearchPaperLongg(topic, userId) {
     }
 
     const prompts = [
-      { text: `# Abstract\n\nWrite a 200-word abstract for a research paper on "${topic}". Give it a proper title.`, name: 'abstract' },
-      { text: `# Introduction\n\nWrite a 600-word introduction on "${topic}". Include background, objectives, and importance.`, name: 'introduction' },
+      { text: `# Abstract\n\nWrite a 300-word abstract for a research paper on "${topic}". Give it a proper title.`, name: 'abstract' },
+      { text: `# Introduction\n\nWrite a 650-word introduction on "${topic}". Include background, objectives, and importance.`, name: 'introduction' },
       { text: `# Methodology\n\nDescribe methodology with subheadings like "## Data Collection" and "## Analysis".`, name: 'methodology' },
       { text: `# Findings\n\nPresent findings with examples and markdown formatting.`, name: 'findings' },
       { text: `# Findings\n\nPresent findings that you didn't write on the first findings with examples and markdown formatting.`, name: 'other-findings' },
