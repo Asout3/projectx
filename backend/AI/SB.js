@@ -268,22 +268,30 @@ async function generateChapter(prompt, chapterNum) {
 // 
 
 // === Formatter ===
-function formatMath(content) {
-  // Preserve existing LaTeX delimiters ($...$ or $$...$$) and enhance basic math
-  return content
-    // Handle basic exponents (e.g., x^2 -> $x^2$)
-    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `$${base}^{${exp}}$`)
-    // Handle fractions (e.g., a/b -> $\frac{a}{b}$)
-    .replace(/([0-9]+)\s*\/\s*([0-9]+)/g, (_, num, den) => `$\\frac{${num}}{${den}}$`)
-    // Protect existing LaTeX by not double-wrapping (avoid touching $...$ or $$...$$)
-    .replace(/(?<!\$)([a-zA-Z0-9]+)\s*([+\-*/])\s*([a-zA-Z0-9]+)/g, (_, left, op, right) => {
-      // Wrap simple arithmetic in $...$ if not already wrapped
-      if (!content.match(/\$[^$]*\$\s*$/)) {
-        return `$${left}${op}${right}$`;
-      }
-      return `${left}${op}${right}`;
-    });
+unction formatMath(content) {
+  const links = [];
+  content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+    links.push(`<a href="${url}" target="_blank">${text}</a>`);
+    return `__LINK__${links.length - 1}__`;
+  });
+
+  content = content
+    // Brackets to inline MathJax
+    .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
+    .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
+
+    // x^2, a^b → \(a^b\)
+    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `\\(${base}^{${exp}}\\)`)
+
+    // simple fractions 2/3 → \(\frac{2}{3}\)
+    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`);
+
+  // Restore links
+  content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
+
+  return content;
 }
+
 
 function cleanUpAIText(text) {
   // 1. Remove horizontal separator lines (e.g., -----, =====)
