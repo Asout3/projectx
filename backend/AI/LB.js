@@ -117,25 +117,39 @@ async function generateChapter(prompt, chapterNum) {
 }
 
 // === Formatter ===
+// === Formatter ===
 function formatMath(content) {
+  // Preserve existing LaTeX delimiters ($...$ or $$...$$) and enhance basic math
   return content
-    .replace(/(\d+)\s*\^\s*(\d+)/g, (_, base, exp) => `$${base}^${exp}$`)
-    .replace(/(\d+)\s*(\s*)/g, (_, num, den) => `$\\frac{${num}}{${den}}$`);
+    // Handle basic exponents (e.g., x^2 -> $x^2$)
+    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `$${base}^{${exp}}$`)
+    // Handle fractions (e.g., a/b -> $\frac{a}{b}$)
+    .replace(/([0-9]+)\s*\/\s*([0-9]+)/g, (_, num, den) => `$\\frac{${num}}{${den}}$`)
+    // Protect existing LaTeX by not double-wrapping (avoid touching $...$ or $$...$$)
+    .replace(/(?<!\$)([a-zA-Z0-9]+)\s*([+\-*/])\s*([a-zA-Z0-9]+)/g, (_, left, op, right) => {
+      // Wrap simple arithmetic in $...$ if not already wrapped
+      if (!content.match(/\$[^$]*\$\s*$/)) {
+        return `$${left}${op}${right}$`;
+      }
+      return `${left}${op}${right}`;
+    });
 }
 
 function cleanUpAIText(text) {
-  // Remove horizontal separator lines (e.g., -----, =====)
-  let cleaned = text.replace(/[-_=*~]{5,}/g, '');
+  // 1. Remove horizontal separator lines (e.g., -----, =====)
+  const noDividers = text.replace(/^(?:[-=_*~\s]{5,})$/gm, '');
 
-  // Normalize newlines and replace long dashes
-  return cleaned
-    .replace(/\n{3,}/g, '\n\n')   // Convert 3+ newlines to 2
-    .replace(/\n\s*$/g, '')         // Trim trailing newlines
-    .replace(/[\u2013-\u2014]/g, '-') // Replace em/en dashes with hyphens
+  // 2. Normalize extra newlines (max 2)
+  const normalized = noDividers
+    .replace(/\n{3,}/g, '\n\n') // Convert 3+ newlines to 2
+    .replace(/\n\s*$/g, '')     // Trim trailing newlines
     .trim();
+
+  // 3. Replace long dashes with standard hyphens
+  return normalized.replace(/[\u2013\u2014]/g, '-');
 }
 
-// === PDF Generator ===
+// === PDF ===
 export async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(formatMath(content));
 
@@ -147,16 +161,17 @@ export async function generatePDF(content, outputPath) {
       <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval';">
 
       <!-- KaTeX for math rendering -->
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-
-      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.contrib/auto-render.min.js"
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css">
+      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.js"></script>
+      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/contrib/auto-render.min.js"
         onload="renderMathInElement(document.body, {
           delimiters: [
             {left: '$$', right: '$$', display: true},
-            {left: '$', right: '$', display: false}
-          ]
+            {left: '$', right: '$', display: false},
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ],
+          throwOnError: false
         });"></script>
 
       <!-- Highlight.js for code block rendering -->
@@ -164,7 +179,7 @@ export async function generatePDF(content, outputPath) {
       <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
       <script>document.addEventListener('DOMContentLoaded', (event) => { hljs.highlightAll(); });</script>
 
-      <!-- Styles -->
+      <!-- Enhanced styling -->
       <style>
         @page {
           margin: 80px 60px;
@@ -180,27 +195,9 @@ export async function generatePDF(content, outputPath) {
           text-align: justify;
         }
 
-        h1 {
-          font-size: 20pt;
-          text-align: center;
-          border-bottom: 1px solid #aaa;
-          padding-bottom: 0.3em;
-          margin-top: 60px;
-          margin-bottom: 30px;
-        }
-
-        h2 {
-          font-size: 16pt;
-          color: #333;
+        h1, h2, h3 {
           margin-top: 40px;
           margin-bottom: 15px;
-        }
-
-        h3 {
-          font-size: 14pt;
-          color: #444;
-          margin-top: 30px;
-          margin-bottom: 10px;
         }
 
         p {
@@ -232,11 +229,6 @@ export async function generatePDF(content, outputPath) {
           border-radius: 0;
         }
 
-        ul, ol {
-          margin: 1em 0;
-          padding-left: 2em;
-        }
-
         table {
           border-collapse: collapse;
           margin: 1em 0;
@@ -251,6 +243,18 @@ export async function generatePDF(content, outputPath) {
           padding: 8px;
           text-align: left;
         }
+
+        /* KaTeX-specific styling */
+        .katex {
+          font-size: 1.1em;
+          line-height: 1.2;
+        }
+
+        .katex-display {
+          display: block;
+          margin: 1em 0;
+          text-align: center;
+        }
       </style>
     </head>
     <body>
@@ -260,11 +264,11 @@ export async function generatePDF(content, outputPath) {
   `;
 
   const browser = await puppeteer.launch({
-  executablePath: await chromium.executablePath(),
-  headless: chromium.headless,
-  args: chromium.args,
-});
-  
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
+    args: chromium.args,
+  });
+
   const page = await browser.newPage();
 
   await page.setContent(html, { waitUntil: 'networkidle0' });
