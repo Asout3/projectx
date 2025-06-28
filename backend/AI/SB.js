@@ -309,27 +309,20 @@ export async function generatePDF(content, outputPath) {
       <meta charset="utf-8">
       <title>Research Paper</title>
       <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval';">
-
-      <!-- KaTeX for math rendering -->
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css">
-      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.js"></script>
-      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/contrib/auto-render.min.js"
-        onload="renderMathInElement(document.body, {
-          delimiters: [
-            {left: '$$', right: '$$', display: true},
-            {left: '$', right: '$', display: false},
-            {left: '\\[', right: '\\]', display: true},
-            {left: '\\(', right: '\\)', display: false}
-          ],
-          throwOnError: false
-        });"></script>
+      
+      <!-- MathJax for math rendering -->
+      <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
       <!-- Highlight.js for code block rendering -->
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
       <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-      <script>document.addEventListener('DOMContentLoaded', (event) => { hljs.highlightAll(); });</script>
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          hljs.highlightAll();
+        });
+      </script>
 
-      <!-- Enhanced styling -->
       <style>
         @page {
           margin: 80px 60px;
@@ -393,18 +386,6 @@ export async function generatePDF(content, outputPath) {
           padding: 8px;
           text-align: left;
         }
-
-        /* KaTeX-specific styling */
-        .katex {
-          font-size: 1.1em;
-          line-height: 1.2;
-        }
-
-        .katex-display {
-          display: block;
-          margin: 1em 0;
-          text-align: center;
-        }
       </style>
     </head>
     <body>
@@ -422,6 +403,12 @@ export async function generatePDF(content, outputPath) {
   const page = await browser.newPage();
 
   await page.setContent(html, { waitUntil: 'networkidle0' });
+
+  // Wait for MathJax to finish rendering (important!)
+  await page.waitForFunction(() =>
+    window.MathJax && window.MathJax.typesetPromise
+  );
+  await page.evaluate(() => MathJax.typesetPromise());
 
   await page.pdf({
     path: outputPath,
@@ -443,6 +430,11 @@ export async function generatePDF(content, outputPath) {
 
   await browser.close();
 }
+
+
+
+
+
 
 // === Master Function ===
 export async function generateBookS(bookTopic, userId) {
