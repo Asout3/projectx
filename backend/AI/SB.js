@@ -268,7 +268,7 @@ async function generateChapter(prompt, chapterNum) {
 // 
 
 // === Formatter ===
-unction formatMath(content) {
+function formatMath(content) {
   const links = [];
   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
     links.push(`<a href="${url}" target="_blank">${text}</a>`);
