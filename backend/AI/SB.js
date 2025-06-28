@@ -301,26 +301,15 @@ function cleanUpAIText(text) {
 
 // === PDF ===
 export async function generatePDF(content, outputPath) {
-  const cleaned = cleanUpAIText(formatMath(content));
+  const cleaned = cleanUpAIText(content); // Keep your formatMath optional if needed
 
   const html = `
   <html>
     <head>
       <meta charset="utf-8">
-      <title>Research Paper</title>
-      <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval';">
-      
-      <!-- MathJax for math rendering -->
-      <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-      <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-
-      <!-- Highlight.js for code block rendering -->
-      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-      <script>
-        document.addEventListener('DOMContentLoaded', () => {
-          hljs.highlightAll();
-        });
+      <title>Document</title>
+      <script type="text/javascript" id="MathJax-script" async
+        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
       </script>
 
       <style>
@@ -338,6 +327,27 @@ export async function generatePDF(content, outputPath) {
           text-align: justify;
         }
 
+        a {
+          color: #0645AD;
+          text-decoration: underline;
+        }
+
+        pre {
+          background: #f5f5f5;
+          padding: 15px;
+          overflow-x: auto;
+          border-radius: 6px;
+          border: 1px solid #ddd;
+          font-family: 'Consolas', monospace;
+        }
+
+        code {
+          background: #f4f4f4;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Consolas', monospace;
+        }
+
         h1, h2, h3 {
           margin-top: 40px;
           margin-bottom: 15px;
@@ -345,46 +355,6 @@ export async function generatePDF(content, outputPath) {
 
         p {
           margin: 0 0 1em 0;
-        }
-
-        pre {
-          background: #f5f5f5;
-          color: #333;
-          padding: 15px;
-          overflow-x: auto;
-          border-radius: 6px;
-          font-size: 13px;
-          font-family: 'Consolas', 'Monaco', monospace;
-          border: 1px solid #ddd;
-        }
-
-        code {
-          background: #f4f4f4;
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-family: 'Consolas', 'Monaco', monospace;
-          font-size: 13px;
-        }
-
-        pre code {
-          background: none;
-          padding: 0;
-          border-radius: 0;
-        }
-
-        table {
-          border-collapse: collapse;
-          margin: 1em 0;
-          width: 100%;
-        }
-
-        table, th, td {
-          border: 1px solid #ccc;
-        }
-
-        th, td {
-          padding: 8px;
-          text-align: left;
         }
       </style>
     </head>
@@ -401,14 +371,7 @@ export async function generatePDF(content, outputPath) {
   });
 
   const page = await browser.newPage();
-
   await page.setContent(html, { waitUntil: 'networkidle0' });
-
-  // Wait for MathJax to finish rendering (important!)
-  await page.waitForFunction(() =>
-    window.MathJax && window.MathJax.typesetPromise
-  );
-  await page.evaluate(() => MathJax.typesetPromise());
 
   await page.pdf({
     path: outputPath,
@@ -430,6 +393,7 @@ export async function generatePDF(content, outputPath) {
 
   await browser.close();
 }
+
 
 
 
