@@ -186,8 +186,8 @@ export async function generatePDF(content, outputPath) {
 
         body {
           font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif;
-          font-size: 13.5px;
-          line-height: 1.7;
+          font-size: 12.5px;
+          line-height: 1.6;
           color: #1a1a1a;
           background: white;
           margin: 0;
