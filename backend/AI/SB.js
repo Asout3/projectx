@@ -9,6 +9,10 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,7 +42,7 @@ if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
 const together = new Together({
-  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Use env variable
+  apiKey: process.env.TOGETHER_API_KEY || 'your-api-key-here', // Fallback for local testing
 });
 
 // Markdown & Code Highlighting
@@ -109,7 +113,7 @@ function combineChapters(files) {
 }
 
 // === AI ===
-async function askAI(prompt, userId) {
+async function askAI(prompt, userId, bookTopic) {
   const history = userHistories.get(userId) || [];
   const trimmedHistory = trimHistory(history);
   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
@@ -128,9 +132,9 @@ async function askAI(prompt, userId) {
       .trim();
 
     // Validate output relevance
-    if (!reply.toLowerCase().includes(userId.split('-')[1].toLowerCase())) {
-      logger.warn(`Irrelevant output detected for ${userId}: ${reply.slice(0, 50)}...`);
-      throw new Error('Output does not match requested topic');
+    if (!reply.toLowerCase().includes(bookTopic.toLowerCase().replace(/\s+/g, ''))) {
+      logger.warn(`Irrelevant output for ${userId}: ${reply.slice(0, 50)}...`);
+      throw new Error(`Output does not match topic: ${bookTopic}`);
     }
 
     history.push({ role: 'user', content: prompt });
@@ -146,8 +150,8 @@ async function askAI(prompt, userId) {
 }
 
 // === Chapter ===
-async function generateChapter(prompt, chapterNum, userId) {
-  const chapterText = await askAI(prompt, userId);
+async function generateChapter(prompt, chapterNum, userId, bookTopic) {
+  const chapterText = await askAI(prompt, userId, bookTopic);
   const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
   saveToFile(filename, chapterText);
   return filename;
@@ -201,6 +205,8 @@ async function generatePDF(content, outputPath) {
       </script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+      <බ
+
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
@@ -338,7 +344,7 @@ export async function generateBookS(bookTopic, userId) {
       const chapterNum = index + 1;
       logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
       try {
-        const chapterFile = await generateChapter(prompt, chapterNum, safeUserId);
+        const chapterFile = await generateChapter(prompt, chapterNum, safeUserId, bookTopic);
         chapterFiles.push(chapterFile);
       } catch (error) {
         logger.error(`Failed to generate Chapter ${chapterNum}: ${error.message}`);
