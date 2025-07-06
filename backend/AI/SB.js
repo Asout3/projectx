@@ -130,10 +130,13 @@ async function askAI(prompt, userId, bookTopic) {
       .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
       .trim();
 
-    // Validate output relevance
-    if (!reply.toLowerCase().includes(bookTopic.toLowerCase().replace(/\s+/g, ''))) {
-      logger.warn(`Irrelevant output for ${userId}: ${reply.slice(0, 50)}...`);
-      throw new Error(`Output does not match topic: ${bookTopic}`);
+    // ✅ Flexible topic validation (word-based match)
+    const topicWords = bookTopic.toLowerCase().split(/\s+/);
+    const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
+
+    if (!isRelevant) {
+      logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
+      throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
     }
 
     history.push({ role: 'user', content: prompt });
@@ -141,12 +144,15 @@ async function askAI(prompt, userId, bookTopic) {
     userHistories.set(userId, history);
     saveConversationHistory(userId, history);
 
+    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
     return reply;
+
   } catch (error) {
-    logger.error(`AI request failed for ${userId}: ${error.message}`);
+    logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
     throw error;
   }
 }
+
 
 // === Chapter ===
 async function generateChapter(prompt, chapterNum, userId, bookTopic) {
