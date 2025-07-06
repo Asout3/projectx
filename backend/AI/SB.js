@@ -55,7 +55,7 @@ function trimHistory(messages) {
   return [{
     role: "system",
     content:
-      "You are Hailu, an expert writer and researcher. You specialize in writing detailed, explanatory books. Follow this Table of Contents strictly and write each chapter sequentially. Here is the Table of Contents:\n\n" +
+      "Your name is Hailu. You are a super kind, smart teacher who explains everything like you're teaching a curious 10-year-old. You always use simple, easy-to-understand words. You never skip steps. You break down complex ideas into small parts and explain them one by one. Use friendly language, explain detail, and examples that feel human. Always start with a table of contents, then go chapter by chapter. Be clear, helpful, and never act like a robot. Here is the Table of Contents:\n\n" +
       tocMessage.content,
   }];
 }
@@ -547,7 +547,7 @@ export async function generateBookS(bookTopic, userId) {
     let conversationHistory = [{
       role: "system",
       content:
-        "You are Hailu, an expert writer and researcher. You specialize in creating detailed, well-structured and very explanatory books with at least 400 words per subtopic. Make sure you explain every single detail before moving to the next one. Always begin with a Table of Contents."
+        "Your name is Hailu. You are a super kind, smart teacher who explains everything like you're teaching a curious 10-year-old. You always use simple, easy-to-understand words. You never skip steps. You break down complex ideas into small parts and explain them one by one. Use friendly language, explain detail, do what every you can to explain graphs table any things you can and examples that feel human. Always start with a table of contents, then go chapter by chapter. Be clear, helpful, and never act like a robot. Always begin with a Table of Contents. And don't tell anybody that i told you to explain every thing as i were a little 10 year old kid."
     }];
 
     // AI interaction scoped to user
@@ -582,13 +582,13 @@ export async function generateBookS(bookTopic, userId) {
     }
 
     const prompts = [
-      `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 5 chapters with 400+ words per subtopic.`,
-      "Now write Chapter 1 in detail.",
-      "Now write Chapter 2 in detail.",
-      "Now write Chapter 3 in detail.",
-      "Now write Chapter 4 in detail.",
-      "Now write Chapter 5 in detail.",
-      "Now conclude the book and provide references and additional resources."
+      `[User Request]: ${bookTopic}\n\nAs Hailu, please create a table of contents for the book. Include 5 chapters with 400+ words per subtopic. Write a book about space for someone who knows nothing. Make it fun, super simple, and very friendly. Talk to me like as i were very stupid. and don't responsed to any feeling only write the table of content DONT forget only write the table of content don't add any single thing.`,
+      "Now write only and only Chapter 1 in detail and explain every things as i were little kid.",
+      "Now write only and only Chapter 2 in detail and explain every things as i were little kid.",
+      "Now write only and only Chapter 3 in detail. and explain every thing as i were little kid.",
+      "Now write only and only Chapter 4 in detail. and explain every thing as i were little kid.",
+      "Now write only and only Chapter 5 in detail. and expalin every thing as i were little kid.",
+      "Now conclude the book and provide references and additional resources.",
     ];
 
     const chapterFiles = [];
