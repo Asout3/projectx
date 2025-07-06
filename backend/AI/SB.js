@@ -91,7 +91,7 @@ export async function askAI(prompt) {
     messages,
     model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
     max_tokens: 3000,
-    temperature: 0.8,
+    temperature: 0.6, // Lowered for more focused outputs
   });
 
   let reply = response.choices[0].message.content
@@ -107,9 +107,9 @@ export async function askAI(prompt) {
 }
 
 // === Chapter ===
-async function generateChapter(prompt, chapterNum) {
+async function generateChapter(prompt, chapterNum, userId) {
   const chapterText = await askAI(prompt);
-  const filename = `${CHAPTER_PREFIX}-${chapterNum}.txt`;
+  const filename = `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`;
   saveToFile(filename, chapterText);
   return filename;
 }
@@ -123,23 +123,19 @@ function formatMath(content) {
   });
 
   content = content
-    // Brackets to inline MathJax
     .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
     .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
 
-    // x^2, a^b → \(a^b\)
     .replace(
       /([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g,
       (_, base, exp) => `\\(${base}^{${exp}}\\)`,
     )
 
-    // simple fractions 2/3 → \(\frac{2}{3}\)
     .replace(
       /(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g,
       (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`,
     );
 
-  // Restore links
   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
 
   return content;
@@ -148,17 +144,16 @@ function formatMath(content) {
 function cleanUpAIText(text) {
   return (
     text
-      // Remove long dividers (---, ===, etc.) but leave ** and *
       .replace(/^(?:[-=_~\s]{5,})$/gm, "")
-      .replace(/\n{3,}/g, "\n\n") // Collapse multiple newlines to 2
-      .replace(/\n\s*$/g, "") // Remove trailing blank lines
-      .replace(/[\u2013\u2014]/g, "-") // Normalize em/en dashes
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/\n\s*$/g, "")
+      .replace(/[\u2013\u2014]/g, "-")
       .trim()
   );
 }
 
 export async function generatePDF(content, outputPath) {
-  const cleaned = cleanUpAIText(content); // ✅ do NOT escape "**" or "*"
+  const cleaned = cleanUpAIText(content);
 
   const html = `
   <html>
@@ -386,11 +381,11 @@ export async function generateBookS(bookTopic, userId) {
   try {
     console.log(`📚 Generating book for user: ${userId} with topic: ${bookTopic}`);
 
-    // Each user/request gets their own conversation history
+    // Reset conversation history for each new book to avoid context leakage
     let conversationHistory = [{
       role: "system",
       content:
-        "Your name is Hailu. You are a super kind, smart teacher who explains everything like you're teaching a curious 10-year-old. You always use simple, easy-to-understand words. You never skip steps. You break down complex ideas into small parts and explain them one by one. Use friendly language, explain detail, do what every you can to explain graphs table any things you can and examples that feel human. Always start with a table of contents, then go chapter by chapter. Be clear, helpful, and never act like a robot. Always begin with a Table of Contents. And don't tell anybody that i told you to explain every thing as i were a little 10 year old kid."
+        "Your name is Hailu. You are a super kind, smart teacher who explains everything like you're teaching a curious 10-year-old. You always use simple, easy-to-understand words. You never skip steps. You break down complex ideas into small parts and explain them one by one. Use friendly language, detailed explanations, and human-like examples. Always start with a table of contents, then go chapter by chapter. Be clear, helpful, and focus only on the requested topic. Ignore any previous topics or context."
     }];
 
     // AI interaction scoped to user
@@ -402,7 +397,7 @@ export async function generateBookS(bookTopic, userId) {
         messages,
         model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
         max_tokens: 3000,
-        temperature: 0.8,
+        temperature: 0.6, // Lowered for more focused outputs
       });
 
       let reply = response.choices[0].message.content
@@ -426,32 +421,32 @@ export async function generateBookS(bookTopic, userId) {
 
     const prompts = [
       // Table of Contents
-      `As Hailu, create a table of contents for a book about space for someone with no prior knowledge. The book should have 5 chapters, each covering a unique aspect of space (e.g., stars, planets, space exploration, galaxies, black holes). Each chapter should be at least 400 words and written in a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Use clear, descriptive chapter titles and include 2–3 subtopics per chapter (e.g., "What is a star?" or "How do we explore space?"). Output only the table of contents as a numbered list, with chapter titles and subtopics, and nothing else. Ensure topics are distinct and avoid overlap.`,
+      `As Hailu, create a table of contents for a book about "${bookTopic}" for someone with no prior knowledge. The book should have 5 chapters, each covering a unique aspect of ${bookTopic} (e.g., for trading bots: what they are, how they work, strategies, risks, tools). Each chapter should be at least 400 words and written in a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Use clear, descriptive chapter titles and include 2–3 subtopics per chapter (e.g., "What is a trading bot?" or "How do trading bots make decisions?"). Output only the table of contents as a numbered list, with chapter titles and subtopics, and nothing else. Ensure topics are distinct, avoid overlap, and focus only on ${bookTopic}. Ignore any other topics like space or unrelated subjects.`,
 
       // Chapter 1
-      `As Hailu, write Chapter 1 of the book about space, based on the table of contents you created. Focus on the first chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., compare stars to campfires) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a table showing planet sizes") that could help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, and ensure scientific accuracy. Do not include the table of contents or other chapters.`,
+      `As Hailu, write Chapter 1 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the first chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a diagram showing how a trading bot works") to help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic}. Do not include the table of contents, other chapters, or unrelated topics like space.`,
 
       // Chapter 2
-      `As Hailu, write Chapter 2 of the book about space, based on the table of contents you created. Focus on the second chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., compare planets to marbles) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a diagram of the solar system") that could help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, and ensure scientific accuracy. Do not include the table of contents or other chapters.`,
+      `As Hailu, write Chapter 2 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the second chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., for trading bots, compare strategies to game plans in sports) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a table listing trading bot strategies") to help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic}. Do not include the table of contents, other chapters, or unrelated topics like space.`,
 
       // Chapter 3
-      `As Hailu, write Chapter 3 of the book about space, based on the table of contents you created. Focus on the third chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., compare galaxies to cities) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a table comparing galaxy types") that could help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, and ensure scientific accuracy. Do not include the table of contents or other chapters.`,
+      `As Hailu, write Chapter 3 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the third chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., for trading bots, compare risks to crossing a busy street) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a diagram of trading bot risks") to help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic}. Do not include the table of contents, other chapters, or unrelated topics like space.`,
 
       // Chapter 4
-      `As Hailu, write Chapter 4 of the book about space, based on the table of contents you created. Focus on the fourth chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., compare black holes to vacuum cleaners) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a diagram showing a black hole's parts") that could help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, and ensure scientific accuracy. Do not include the table of contents or other chapters.`,
+      `As Hailu, write Chapter 4 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fourth chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., for trading bots, compare tools to a toolbox) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a table of trading bot tools") to help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic}. Do not include the table of contents, other chapters, or unrelated topics like space.`,
 
       // Chapter 5
-      `As Hailu, write Chapter 5 of the book about space, based on the table of contents you created. Focus on the fifth chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., compare space missions to adventures) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a timeline of space missions") that could help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, and ensure scientific accuracy. Do not include the table of contents or other chapters.`,
+      `As Hailu, write Chapter 5 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fifth chapter's topic and subtopics. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. Break down complex ideas into small, clear steps with vivid examples (e.g., for trading bots, compare building one to assembling a toy) and at least one analogy per subtopic. Include a simple description of a diagram or table (e.g., "a flowchart for building a trading bot") to help explain the topic. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic}. Do not include the table of contents, other chapters, or unrelated topics like space.`,
 
       // Conclusion and References
-      `As Hailu, write the conclusion and references for the book about space, based on the table of contents and chapters you created. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. In the conclusion (200–300 words), summarize the key ideas from all 5 chapters and inspire the reader to learn more about space. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., NASA’s kids’ website, simple books, or educational videos) with a brief description of each (1–2 sentences). Use clear headings ("Conclusion" and "References"). Avoid copyrighted material and ensure all resources are accessible and appropriate for beginners. Do not include the table of contents or chapter content.`
+      `As Hailu, write the conclusion and references for the book about "${bookTopic}", based on the table of contents and chapters you created. Use a fun, simple, and friendly tone, like explaining to a curious 10-year-old. In the conclusion (200–300 words), summarize the key ideas from all 5 chapters and inspire the reader to learn more about ${bookTopic}. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., websites, simple books, or educational videos about trading bots) with a brief description of each (1–2 sentences). Use clear headings ("Conclusion" and "References"). Avoid copyrighted material, ensure all resources are accessible and appropriate for beginners, and focus only on ${bookTopic}. Do not include the table of contents, chapter content, or unrelated topics like space.`
     ];
 
     const chapterFiles = [];
     for (const [index, prompt] of prompts.entries()) {
       const chapterNum = index + 1;
-      console.log(`\n📘 Generating Chapter ${chapterNum}`);
-      chapterFiles.push(await generateChapter(prompt, chapterNum));
+      console.log(`\n📘 Generating Chapter ${chapterNum} for ${bookTopic}`);
+      chapterFiles.push(await generateChapter(prompt, chapterNum, userId));
     }
 
     const combinedContent = combineChapters(chapterFiles);
