@@ -12,6 +12,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sparticuz/chromium": "^119.0.0",
+    "async": "^3.2.6",
     "axios": "^1.8.4",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
@@ -19,7 +21,7 @@
     "highlight.js": "^11.11.1",
     "marked": "^15.0.12",
     "puppeteer-core": "^21.3.8",
-    "@sparticuz/chromium": "^119.0.0",
-    "together-ai": "^0.15.2"
+    "together-ai": "^0.15.2",
+    "winston": "^3.17.0"
   }
 }
