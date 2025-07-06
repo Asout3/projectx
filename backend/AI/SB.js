@@ -9,7 +9,6 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
-import dotenv from 'dotenv';
 
 // Load environment variables
 dotenv.config();
@@ -42,7 +41,7 @@ if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
 const together = new Together({
-  apiKey: process.env.TOGETHER_API_KEY || 'your-api-key-here', // Fallback for local testing
+  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
 });
 
 // Markdown & Code Highlighting
