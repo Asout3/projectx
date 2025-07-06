@@ -156,11 +156,25 @@ async function askAI(prompt, userId, bookTopic) {
 
 // === Chapter ===
 async function generateChapter(prompt, chapterNum, userId, bookTopic) {
-  const chapterText = await askAI(prompt, userId, bookTopic);
+  const history = userHistories.get(userId) || [];
+  const tocMessage = history.find(
+    (msg) => msg.role === 'assistant' && msg.content.toLowerCase().includes('chapter 1')
+  );
+
+  const toc = history.find(
+    (msg) => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents')
+  );
+
+  const modifiedPrompt = toc
+    ? `${prompt}\n\nRefer to this Table of Contents:\n\n${toc.content}`
+    : prompt;
+
+  const chapterText = await askAI(modifiedPrompt, userId, bookTopic);
   const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
   saveToFile(filename, chapterText);
   return filename;
 }
+
 
 // === Formatter ===
 function formatMath(content) {
