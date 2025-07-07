@@ -121,8 +121,11 @@ async function askAI(prompt, userId, bookTopic) {
     const response = await together.chat.completions.create({
       messages,
       model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
-      max_tokens: 3000,
-      temperature: 0.6,
+      top_p: 0.9,                 // balance of creativity and clarity
+      temperature: 0.6,           // keeps things focused but still human
+      presence_penalty: 0.3,      // allows gentle repetition where helpful
+      frequency_penalty: 0.3,     // avoids word echo
+      max_tokens: 3000            // allows long, complete chapter-style answers
     });
 
     let reply = response.choices[0].message.content
