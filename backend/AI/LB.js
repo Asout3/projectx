@@ -377,6 +377,7 @@ const bookQueue = async.queue(async (task, callback) => {
 }, 1); // Process one book at a time
 
 // === Master Function ===
+//generateBookL
 export async function generateBookL(bookTopic, userId) {
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`; // Unique ID per user and topic
   logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
