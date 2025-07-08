@@ -128,8 +128,7 @@ export default function PromptSender() {
             <DropdownItem key="book_small">Small Book</DropdownItem>
             <DropdownItem key="book_medium">Medium Book</DropdownItem>
             <DropdownItem key="book_long">Long Book</DropdownItem>
-            <DropdownItem key="research">Research Paper</DropdownItem>
-            <DropdownItem key="research_long">Long Research Paper</DropdownItem>
+            <DropdownItem key="research_long">Research Paper</DropdownItem>
           </DropdownMenu>
         </Dropdown>
 
