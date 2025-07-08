@@ -3,18 +3,18 @@
 import { useState, useMemo } from "react";
 import axios from "axios";
 import Greet from "../../components/greet";
-import { auth } from "../../auth/firebaseSDK"; //  Make sure this path is correct
+import { auth } from "../../auth/firebaseSDK";
 import {
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
   Button,
-  Selection
+  Selection,
 } from "@heroui/react";
 
 const api = axios.create({
-  baseURL: "https://projectx-production-253c.up.railway.app", // use your deployed server in production   // main baseURL is https://projectx-c5md.onrender.com
+  baseURL: "https://projectx-production-253c.up.railway.app",
   headers: {
     "Content-Type": "application/json",
   },
@@ -30,6 +30,7 @@ export default function PromptSender() {
   const [selectedKeys, setSelectedKeys] = useState<Selection>(
     new Set(["book_small"])
   );
+  const [isCancelled, setIsCancelled] = useState(false); // 🔁 NEW: Track cancel status
 
   const selectedValue = useMemo(
     () => Array.from(selectedKeys)[0],
@@ -58,14 +59,16 @@ export default function PromptSender() {
     const userId = user.uid;
 
     setIsGeneratingPDF(true);
+    setIsCancelled(false); // ✅ Reset cancel state
     setPdfProgress(0);
+    setPdfLink(null);
 
     const endpoint = apiMap[selectedValue] || apiMap["book_small"];
 
     try {
       const res = await api.post(
         endpoint,
-        { prompt, userId }, // 👈 send userId with prompt
+        { prompt, userId },
         {
           responseType: "blob",
           onDownloadProgress: (e) => {
@@ -91,6 +94,20 @@ export default function PromptSender() {
     } finally {
       setIsGeneratingPDF(false);
     }
+  };
+
+  const handleCancel = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    setIsCancelled(true);
+    try {
+      await api.post("/api/cancelGeneration", { userId: user.uid }); // 🔁 NEW: cancel API
+      setResponse("🛑 Generation cancelled.");
+    } catch (err) {
+      console.error("Cancel request failed:", err);
+      setResponse("❌ Failed to cancel request.");
+    }
+    setIsGeneratingPDF(false);
   };
 
   return (
@@ -135,10 +152,17 @@ export default function PromptSender() {
           disabled={isGeneratingPDF}
           className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50"
         >
-          {isGeneratingPDF
-            ? `Generating (${pdfProgress}%)`
-            : "Generate"}
+          {isGeneratingPDF ? `Generating (${pdfProgress}%)` : "Generate"}
         </Button>
+
+        {isGeneratingPDF && (
+          <Button
+            onClick={handleCancel}
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
+          >
+            Cancel
+          </Button>
+        )}
       </div>
 
       {pdfLink && (
@@ -163,6 +187,9 @@ export default function PromptSender() {
           </div>
         </div>
       )}
+
+      {response && <p className="text-sm mt-2 text-red-500">{response}</p>}
     </div>
   );
 }
+
