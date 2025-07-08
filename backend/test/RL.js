@@ -349,8 +349,59 @@ const bookQueue = async.queue(async (task, callback) => {
 
 // === Master Function ===
 //generateResearchPaperLongg
-//"Your name is Hailu. You are a kind, brilliant researcher and teacher explaining to a curious person with no background knowledge. Your goal is to create the best, most well-structured research paper possible. Use simple, clear words. Break down complex ideas step-by-step, and include human-like, relatable examples. Always start with a complete table of contents, then write each section or chapter with focus and depth. Ensure clarity, accuracy, and logical flow. Focus strictly on the requested topic and ignore anything unrelated."
+export async function generateResearchPaperLongg(bookTopic, userId) {
+  const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`; // Unique ID per user and topic
+  logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
 
+  try {
+    global.cancelFlags = global.cancelFlags || {}; // ✅ Make sure global flag object exists
+
+    // Initialize fresh history for this user and topic
+    userHistories.set(safeUserId, [{
+      role: "system",
+      content:
+        "Your name is Hailu. You are a kind, brilliant researcher and teacher explaining to a curious person with no background knowledge. Your goal is to create the best, most well-structured research paper possible. Use simple, clear words. Break down complex ideas step-by-step, and include human-like, relatable examples. Always start with a complete table of contents, then write each section or chapter with focus and depth. Ensure clarity, accuracy, and logical flow. Focus strictly on the requested topic and ignore anything unrelated."
+    }]);
+
+    const prompts = generatePrompts(bookTopic);
+    const chapterFiles = [];
+
+    for (const [index, prompt] of prompts.entries()) {
+      // ✅ Check for cancellation before each chapter
+      if (global.cancelFlags?.[userId]) {
+        delete global.cancelFlags[userId];
+        logger.warn(`❌ Book generation cancelled for user: ${userId}`);
+        throw new Error('Generation cancelled');
+      }
+
+      const chapterNum = index + 1;
+      logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
+      try {
+        const chapterFile = await generateChapter(prompt, chapterNum, safeUserId, bookTopic);
+        chapterFiles.push(chapterFile);
+      } catch (error) {
+        logger.error(`Failed to generate Chapter ${chapterNum}: ${error.message}`);
+        throw new Error(`Chapter ${chapterNum} generation failed`);
+      }
+    }
+
+    const combinedContent = combineChapters(chapterFiles);
+
+    const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
+    const fileName = `output_${safeUserId}_${safeTopic}.pdf`;
+    const outputPath = path.join(OUTPUT_DIR, fileName);
+    await generatePDF(combinedContent, outputPath);
+
+    chapterFiles.forEach(deleteFile);
+    userHistories.delete(safeUserId); // Clean up history
+
+    logger.info(`Book generation complete. Output: ${outputPath}`);
+    return outputPath;
+  } catch (error) {
+    logger.error(`Book generation failed for ${safeUserId}: ${error.message}`);
+    throw error;
+  }
+}
 
 // === API Wrapper ===
 export function queueBookGeneration(bookTopic, userId) {
