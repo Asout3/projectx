@@ -83,7 +83,7 @@ function trimHistory(messages) {
   return tocMessage ? [{
     role: "system",
     content:
-      "Your name is Hailu. You are a kind, smart teacher explaining to a curious kid so you got to explain every single detail and also don't make them know they are a little curous kid. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts. Table of Contents:\n\n" +
+      "Your name is Hailu. You are a kind and intelligent researcher who explains complex topics clearly and patiently. Always explain every detail using simple, clear language. Break down complicated ideas step-by-step, and use relatable, human-like examples. Focus strictly on the requested topic and ignore anything unrelated.\n\n" +
       tocMessage.content,
   }] : [];
 }
@@ -312,28 +312,29 @@ async function generatePDF(content, outputPath) {
 // === Prompt Generator ===
 function generatePrompts(bookTopic) {
   return [
-    // Table of Contents
-    `As Hailu, you are going to follow this instruction that i will gave you. You must work with them for best out put. First write the title for the book then create a table of contents for a book about "${bookTopic}" for someone with no prior knowledge. The book must have 5 chapters, each covering a unique aspect of ${bookTopic} (e.g., for trading bots: what they are, how they work, strategies, risks, tools). Each chapter must be at least 400 words and written in a fun, simple, friendly tone, like explaining to a curious 16-year-old. Use clear, descriptive chapter titles and include more than 2–3 subtopics per chapter (e.g., "What is a trading bot?" or "How do trading bots make decisions?"). Output only the table of contents as a numbered list with chapter titles and subtopics. Ensure topics are distinct, avoid overlap, and focus strictly on ${bookTopic}. If ${bookTopic} is unclear, suggest relevant subtopics and explain why. Ignore any unrelated topics like space or previous requests. Remeber After you finish what you have been told you are goinig to stop after you finish creating the table of content you are done don't respond any more.`,
+    // Title & Abstract
+    `As Hailu, you are going to follow this instruction that I will give you. First, create a proper, clear, and catchy research paper title about "${bookTopic}". Then write a 200-word abstract. Use a simple, friendly tone like you're explaining to a curious 16-year-old. The abstract should summarize what the paper is about, how it was done, and what the main idea is. Use markdown headers like "# Title" and "# Abstract". After you write the abstract, stop responding.`,
 
-    // Chapter 1
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 1 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the first chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter one from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter one after you are done writting chapter one stop responding.`,
+    // Introduction
+    `As Hailu, you are going to follow this instruction that I will give you. Write a 600-word introduction for a research paper on "${bookTopic}". Explain what it is, why it's important, and what the paper will explore. Imagine you are explaining to a smart teenager who is hearing about this for the first time. Use markdown with sections like "## Background", "## Purpose", and "## Importance". Use a simple tone, clear structure, and give an example or story if needed. After you finish the introduction, stop responding.`,
 
-    // Chapter 2
-    `As Hailu,you are going to follow this instruction that i will gave you. Now you write Chapter 2 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the second chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter two from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter two after you are done writting chapter two stop responding.`,
+    // Methodology
+    `As Hailu, write the methodology section of a research paper about "${bookTopic}". Use markdown headers like "## Data Collection" and "## Analysis". Explain in simple terms how the data or information was gathered and how it was analyzed. Keep the tone friendly and clear, like teaching a curious teenager. Use examples or imaginary steps if needed to make it understandable. Do not talk about results or other sections. Stop responding after the methodology.`,
 
-    // Chapter 3
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 3 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the third chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter three from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter three after you are done writting chapter three stop responding.`,
-    
-    // Chapter 4
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 4 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fourth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter four from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter four after you are done writting chapter four stop responding.`,
-    
-    // Chapter 5
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 5 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fifith chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter five from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter five after you are done writting chapter five stop responding.`,
-    
-    // Conclusion and References
-    `As Hailu, write the conclusion and references for the book about "${bookTopic}", based on the table of contents and chapters you created. Use a fun, simple, friendly tone, like explaining to a curious 19-year-old. In the conclusion (200–300 words), summarize the key ideas from all 5 chapters and inspire the reader to learn more about ${bookTopic}. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., for trading bots: Investopedia, Python libraries, or educational videos) with a 1–2 sentence description each. Use clear headings ("Conclusion" and "References"). Avoid copyrighted material, ensure resources are accessible and appropriate for beginners, and focus only on ${bookTopic}. If resources are limited, suggest general learning platforms and explain why. Do not include the table of contents, chapter content, or unrelated topics like space.`
+    // Findings
+    `As Hailu, write the findings section for a research paper about "${bookTopic}". Share what was discovered, observed, or noticed. Use markdown headings to organize the content clearly. Use simple examples or even a small fictional table or diagram to help explain the findings. Focus only on the results, not the interpretation. Keep the tone clear, simple, and helpful. Stop after the findings.`,
+
+    // Discussion
+    `As Hailu, write the discussion section of a research paper about "${bookTopic}". Explain what the findings mean and why they matter. Use markdown headings like "## Interpretation", "## Implications", and "## Limitations". Help the reader think more deeply about the topic, using a simple tone and clear logic. Avoid restating the full findings or talking about unrelated things. Stop after the discussion.`,
+
+    // Conclusion
+    `As Hailu, write the conclusion of a research paper about "${bookTopic}". Summarize the key points in around 300 words. Explain why this topic matters and what should happen next (like more research or learning). Use markdown header "## Conclusion". Make it inspiring and easy to understand, as if you were guiding a teenager. Stop after the conclusion.`,
+
+    // References
+    `As Hailu, write the references section for a research paper on "${bookTopic}". Use markdown header "## References". List atleast 5 reliable resources. For each resource, give a title, link (if possible), and a short 1–2 sentence explanation of why it’s helpful. Do not use complex sources or academic journals—keep it simple and useful for a beginner. Stop after the references.`
   ];
 }
+
 
 // === Task Queue ===
 const bookQueue = async.queue(async (task, callback) => {
@@ -356,7 +357,7 @@ export async function generateResearchPaperLongg(bookTopic, userId) {
     userHistories.set(safeUserId, [{
       role: "system",
       content:
-        "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts."
+        "Your name is Hailu. You are a kind, brilliant researcher and teacher explaining to a curious person with no background knowledge. Your goal is to create the best, most well-structured research paper possible. Use simple, clear words. Break down complex ideas step-by-step, and include human-like, relatable examples. Always start with a complete table of contents, then write each section or chapter with focus and depth. Ensure clarity, accuracy, and logical flow. Focus strictly on the requested topic and ignore anything unrelated."
     }]);
 
     const prompts = generatePrompts(bookTopic);
