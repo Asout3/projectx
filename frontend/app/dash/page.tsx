@@ -40,7 +40,6 @@ export default function PromptSender() {
     book_small: "/api/generateBookSmall",
     book_medium: "/api/generateBookMed",
     book_long: "/api/generateBookLong",
-    research: "/api/generateResearchPaper",
     research_long: "/api/generateResearchPaperLong",
   };
 
@@ -113,8 +112,7 @@ export default function PromptSender() {
                 book_small: "Small Book",
                 book_medium: "Medium Book",
                 book_long: "Long Book",
-                research: "Research Paper",
-                research_long: "Long Research Paper",
+                research_long: "Research Paper",
               }[selectedValue] || "Select File Type"}
             </Button>
           </DropdownTrigger>
