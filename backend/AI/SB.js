@@ -352,6 +352,8 @@ export async function generateBookS(bookTopic, userId) {
   logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
 
   try {
+    global.cancelFlags = global.cancelFlags || {}; // ✅ Make sure global flag object exists
+
     // Initialize fresh history for this user and topic
     userHistories.set(safeUserId, [{
       role: "system",
@@ -363,6 +365,13 @@ export async function generateBookS(bookTopic, userId) {
     const chapterFiles = [];
 
     for (const [index, prompt] of prompts.entries()) {
+      // ✅ Check for cancellation before each chapter
+      if (global.cancelFlags?.[userId]) {
+        delete global.cancelFlags[userId];
+        logger.warn(`❌ Book generation cancelled for user: ${userId}`);
+        throw new Error('Generation cancelled');
+      }
+
       const chapterNum = index + 1;
       logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
       try {
@@ -391,6 +400,7 @@ export async function generateBookS(bookTopic, userId) {
     throw error;
   }
 }
+
 
 // === API Wrapper ===
 export function queueBookGeneration(bookTopic, userId) {
