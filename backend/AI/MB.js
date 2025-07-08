@@ -125,7 +125,7 @@ async function askAI(prompt, userId, bookTopic) {
       temperature: 0.6,           // keeps things focused but still human
       presence_penalty: 0.3,      // allows gentle repetition where helpful
       frequency_penalty: 0.3,     // avoids word echo
-      max_tokens: 2700            // allows long, complete chapter-style answers
+      max_tokens: 3000            // allows long, complete chapter-style answers
     });
 
     let reply = response.choices[0].message.content
