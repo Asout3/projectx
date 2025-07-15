@@ -1,4 +1,4 @@
-import { Together } from "together-ai";
+//import { Together } from "together-ai";
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import puppeteer from 'puppeteer-core';
@@ -40,9 +40,9 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
-const together = new Together({
-  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
-});
+//const together = new Together({
+//  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
+//});
 
 // Markdown & Code Highlighting
 marked.setOptions({
@@ -118,28 +118,36 @@ async function askAI(prompt, userId, bookTopic) {
   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
 
   try {
-    const response = await together.chat.completions.create({
-      messages,
-      model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",  
-      top_p: 0.9,                 // balance of creativity and clarity
-      temperature: 0.6,           // keeps things focused but still human
-      presence_penalty: 0.3,      // allows gentle repetition where helpful
-      frequency_penalty: 0.3,     // avoids word echo
-      max_tokens: 3000            // allows long, complete chapter-style answers
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer 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`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://bookgenai.vercel.app", // Optional for OpenRouter ranking
+        "X-Title": "Book Generator"
+      },
+      body: JSON.stringify({
+        model: "moonshotai/kimi-k2:free",
+        messages,
+        temperature: 0.6,
+        top_p: 0.9,
+        presence_penalty: 0.3,
+        frequency_penalty: 0.3,
+        max_tokens: 4000
+      })
     });
 
-    let reply = response.choices[0].message.content
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
-      .trim();
+    const data = await response.json();
 
-    // ✅ Flexible topic validation (word-based match)
+    let reply = data?.choices?.[0]?.message?.content ?? '';
+
+    // Clean + Validate
     const topicWords = bookTopic.toLowerCase().split(/\s+/);
     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
 
     if (!isRelevant) {
       logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
-      throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
+      throw new Error(`Output not relevant to topic: "${bookTopic}"`);
     }
 
     history.push({ role: 'user', content: prompt });
@@ -147,7 +155,7 @@ async function askAI(prompt, userId, bookTopic) {
     userHistories.set(userId, history);
     saveConversationHistory(userId, history);
 
-    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
+    logger.info(`✅ AI response saved for [${userId}] on topic "${bookTopic}"`);
     return reply;
 
   } catch (error) {
@@ -155,6 +163,7 @@ async function askAI(prompt, userId, bookTopic) {
     throw error;
   }
 }
+
 
 
 // === Chapter ===
