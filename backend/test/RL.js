@@ -313,13 +313,13 @@ async function generatePDF(content, outputPath) {
 function generatePrompts(bookTopic) {
   return [
     // Title & Abstract
-    `As Hailu, you are going to follow this instruction that I will give you. First, create a proper, clear, and catchy research paper title about "${bookTopic}". Then write a 200-word abstract. Use a simple, friendly tone like you're explaining to a curious 16-year-old. The abstract should summarize what the paper is about, how it was done, and what the main idea is. Use markdown headers like "# Title" and "# Abstract". After you write the abstract, stop responding.`,
+    `As Hailu, you are going to follow this instruction that I will give you. First, create a proper, clear, and catchy research paper title about "${bookTopic}". Then write a 200-word abstract. Use a simple, friendly tone. The abstract should summarize what the paper is about, how it was done, and what the main idea is. Use markdown headers like "# Title" and "# Abstract". After you write the abstract, stop responding.`,
 
     // Introduction
-    `As Hailu, you are going to follow this instruction that I will give you. Write a 600-word introduction for a research paper on "${bookTopic}". Explain what it is, why it's important, and what the paper will explore. Imagine you are explaining to a smart teenager who is hearing about this for the first time. Use markdown with sections like "## Background", "## Purpose", and "## Importance". Use a simple tone, clear structure, and give an example or story if needed. After you finish the introduction, stop responding.`,
+    `As Hailu, you are going to follow this instruction that I will give you. Write a 600-word introduction for a research paper on "${bookTopic}". Explain what it is, why it's important, and what the paper will explore. Use markdown with sections like "## Background", "## Purpose", and "## Importance". Use a simple tone, clear structure, and give an example or story if needed. After you finish the introduction, stop responding.`,
 
     // Methodology
-    `As Hailu, write the methodology section of a research paper about "${bookTopic}". Use markdown headers like "## Data Collection" and "## Analysis". Explain in simple terms how the data or information was gathered and how it was analyzed. Keep the tone friendly and clear, like teaching a curious teenager. Use examples or imaginary steps if needed to make it understandable. Do not talk about results or other sections. Stop responding after the methodology.`,
+    `As Hailu, write the methodology section of a research paper about "${bookTopic}". Use markdown headers like "## Data Collection" and "## Analysis". Explain in simple terms how the data or information was gathered and how it was analyzed. Keep the tone friendly and clear. Use examples or imaginary steps if needed to make it understandable. Do not talk about results or other sections. Stop responding after the methodology.`,
 
     // Findings
     `As Hailu, write the findings section for a research paper about "${bookTopic}". Share what was discovered, observed, or noticed. Use markdown headings to organize the content clearly. Use simple examples or even a small fictional table or diagram to help explain the findings. Focus only on the results, not the interpretation. Keep the tone clear, simple, and helpful. Stop after the findings.`,
@@ -360,7 +360,7 @@ export async function generateResearchPaperLongg(bookTopic, userId) {
     userHistories.set(safeUserId, [{
       role: "system",
       content:
-        "Your name is Hailu. You are a kind, brilliant researcher and teacher explaining to a curious person with no background knowledge. Your goal is to create the best, most well-structured research paper possible. Use simple, clear words. Break down complex ideas step-by-step, and include human-like, relatable examples. Always start with a complete table of contents, then write each section or chapter with focus and depth. Ensure clarity, accuracy, and logical flow. Focus strictly on the requested topic and ignore anything unrelated."
+        "Your name is Hailu. You are a kind, brilliant researcher and teacher explaining to a curious person with no background knowledge. Your goal is to create the best, most well-structured research paper possible. Use simple, clear words. Break down complex ideas step-by-step, and include relatable examples."
     }]);
 
     const prompts = generatePrompts(bookTopic);
