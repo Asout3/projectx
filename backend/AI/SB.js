@@ -112,6 +112,7 @@ function combineChapters(files) {
 }
 
 // === AI ===
+
 async function askAI(prompt, userId, bookTopic) {
   const history = userHistories.get(userId) || [];
   const trimmedHistory = trimHistory(history);
@@ -123,7 +124,7 @@ async function askAI(prompt, userId, bookTopic) {
       headers: {
         "Authorization": `Bearer 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`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://bookgenai.vercel.app", // Optional for OpenRouter ranking
+        "HTTP-Referer": "https://bookgenai.vercel.app", 
         "X-Title": "Book Generator"
       },
       body: JSON.stringify({
@@ -141,13 +142,20 @@ async function askAI(prompt, userId, bookTopic) {
 
     let reply = data?.choices?.[0]?.message?.content ?? '';
 
-    // Clean + Validate
-    const topicWords = bookTopic.toLowerCase().split(/\s+/);
+    // Clean up bot intros or think tags, similar to old code
+    reply = reply
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/^I'm .*?help you\.\s*/i, '')
+      .trim();
+
+    // Less strict topic relevance check: just make sure reply is not empty and contains at least one topic word longer than 3 letters
+    const topicWords = bookTopic.toLowerCase().split(/\s+/).filter(w => w.length > 3);
     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
 
-    if (!isRelevant) {
-      logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
-      throw new Error(`Output not relevant to topic: "${bookTopic}"`);
+    if (!reply || !isRelevant) {
+      logger.warn(`🛑 Possibly irrelevant output for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
+      // Instead of throwing error immediately, maybe just log and continue or throw
+      throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
     }
 
     history.push({ role: 'user', content: prompt });
@@ -155,7 +163,7 @@ async function askAI(prompt, userId, bookTopic) {
     userHistories.set(userId, history);
     saveConversationHistory(userId, history);
 
-    logger.info(`✅ AI response saved for [${userId}] on topic "${bookTopic}"`);
+    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
     return reply;
 
   } catch (error) {
@@ -163,6 +171,60 @@ async function askAI(prompt, userId, bookTopic) {
     throw error;
   }
 }
+
+
+
+// async function askAI(prompt, userId, bookTopic) {
+//   const history = userHistories.get(userId) || [];
+//   const trimmedHistory = trimHistory(history);
+//   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
+
+//   try {
+//     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+//       method: "POST",
+//       headers: {
+//         "Authorization": `Bearer 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`,
+//         "Content-Type": "application/json",
+//         "HTTP-Referer": "https://bookgenai.vercel.app", // Optional for OpenRouter ranking
+//         "X-Title": "Book Generator"
+//       },
+//       body: JSON.stringify({
+//         model: "moonshotai/kimi-k2:free",
+//         messages,
+//         temperature: 0.6,
+//         top_p: 0.9,
+//         presence_penalty: 0.3,
+//         frequency_penalty: 0.3,
+//         max_tokens: 4000
+//       })
+//     });
+
+//     const data = await response.json();
+
+//     let reply = data?.choices?.[0]?.message?.content ?? '';
+
+//     // Clean + Validate
+//     const topicWords = bookTopic.toLowerCase().split(/\s+/);
+//     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
+
+//     if (!isRelevant) {
+//       logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
+//       throw new Error(`Output not relevant to topic: "${bookTopic}"`);
+//     }
+
+//     history.push({ role: 'user', content: prompt });
+//     history.push({ role: 'assistant', content: reply });
+//     userHistories.set(userId, history);
+//     saveConversationHistory(userId, history);
+
+//     logger.info(`✅ AI response saved for [${userId}] on topic "${bookTopic}"`);
+//     return reply;
+
+//   } catch (error) {
+//     logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
+//     throw error;
+//   }
+// }
 
 
 
