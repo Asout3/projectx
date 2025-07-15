@@ -140,6 +140,8 @@ async function askAI(prompt, userId, bookTopic) {
 
     const data = await response.json();
 
+    console.log("🔵 OpenRouter raw response:", data); 
+    
     if (!data.choices || !data.choices[0]?.message?.content) {
       throw new Error("No valid response from OpenRouter");
     }
