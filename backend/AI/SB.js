@@ -41,7 +41,7 @@ if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
 const together = new Together({
-  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
+apiKey: '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',
 });
 
 // Markdown & Code Highlighting
@@ -120,12 +120,12 @@ async function askAI(prompt, userId, bookTopic) {
   try {
     const response = await together.chat.completions.create({
       messages,
-      model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+      model: "deepseek/deepseek-chat-v3-0324:free",
       top_p: 0.9,                 // balance of creativity and clarity
       temperature: 0.6,           // keeps things focused but still human
       presence_penalty: 0.3,      // allows gentle repetition where helpful
       frequency_penalty: 0.3,     // avoids word echo
-      max_tokens: 3000            // allows long, complete chapter-style answers
+      max_tokens: 4000            // allows long, complete chapter-style answers
     });
 
     let reply = response.choices[0].message.content
