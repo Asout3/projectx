@@ -40,7 +40,7 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
-const OPENROUTER_API_KEY = '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';
+//const OPENROUTER_API_KEY = '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';
 //const together = new Together({
 //  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
 //});
@@ -124,14 +124,19 @@ async function askAI(prompt, userId, bookTopic) {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer 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`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "deepseek/deepseek-chat-v3-0324:free", // adjust model if needed
-        messages: messages
-      })
-    });
+       "model": "moonshotai/kimi-k2:free",
+       "messages": [
+          {
+            "role": "user",
+            "content": "What is the meaning of life?"
+          }
+      ]
+  })
+});
 
     if (!response.ok) {
       const errText = await response.text();
