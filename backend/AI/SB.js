@@ -1,4 +1,4 @@
-//import { Together } from "together-ai";
+import { Together } from "together-ai";
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import puppeteer from 'puppeteer-core';
@@ -40,9 +40,9 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
-//const together = new Together({
-//apiKey: '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',
-//});
+const together = new Together({
+  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
+});
 
 // Markdown & Code Highlighting
 marked.setOptions({
@@ -111,7 +111,6 @@ function combineChapters(files) {
   return combined;
 }
 
-
 // === AI ===
 async function askAI(prompt, userId, bookTopic) {
   const history = userHistories.get(userId) || [];
@@ -119,34 +118,17 @@ async function askAI(prompt, userId, bookTopic) {
   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-         "Authorization": "Bearer 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",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost", // Optional but recommended
-        "X-Title": "Hailu AI Book Generator" // Optional
-      },
-      body: JSON.stringify({
-        model: "deepseek/deepseek-chat-v3-0324:free",
-        messages: messages,
-        top_p: 0.9,
-        temperature: 0.6,
-        presence_penalty: 0.3,
-        frequency_penalty: 0.3,
-        max_tokens: 4000
-      })
+    const response = await together.chat.completions.create({
+      messages,
+      model: "deepseek-ai/DeepSeek-R1-0528",
+      top_p: 0.9,                 // balance of creativity and clarity
+      temperature: 0.6,           // keeps things focused but still human
+      presence_penalty: 0.3,      // allows gentle repetition where helpful
+      frequency_penalty: 0.3,     // avoids word echo
+      max_tokens: 3000            // allows long, complete chapter-style answers
     });
 
-    const data = await response.json();
-
-    console.log("🔵 OpenRouter raw response:", data); 
-    
-    if (!data.choices || !data.choices[0]?.message?.content) {
-      throw new Error("No valid response from OpenRouter");
-    }
-
-    let reply = data.choices[0].message.content
+    let reply = response.choices[0].message.content
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
       .trim();
@@ -173,50 +155,6 @@ async function askAI(prompt, userId, bookTopic) {
     throw error;
   }
 }
-
-// async function askAI(prompt, userId, bookTopic) {
-//   const history = userHistories.get(userId) || [];
-//   const trimmedHistory = trimHistory(history);
-//   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
-
-//   try {
-//     const response = await together.chat.completions.create({
-//       messages,
-//       model: "deepseek/deepseek-chat-v3-0324:free",
-//       top_p: 0.9,                 // balance of creativity and clarity
-//       temperature: 0.6,           // keeps things focused but still human
-//       presence_penalty: 0.3,      // allows gentle repetition where helpful
-//       frequency_penalty: 0.3,     // avoids word echo
-//       max_tokens: 4000            // allows long, complete chapter-style answers
-//     });
-
-//     let reply = response.choices[0].message.content
-//       .replace(/<think>[\s\S]*?<\/think>/gi, '')
-//       .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
-//       .trim();
-
-//     // ✅ Flexible topic validation (word-based match)
-//     const topicWords = bookTopic.toLowerCase().split(/\s+/);
-//     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
-
-//     if (!isRelevant) {
-//       logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
-//       throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
-//     }
-
-//     history.push({ role: 'user', content: prompt });
-//     history.push({ role: 'assistant', content: reply });
-//     userHistories.set(userId, history);
-//     saveConversationHistory(userId, history);
-
-//     logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
-//     return reply;
-
-//   } catch (error) {
-//     logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
-//     throw error;
-//   }
-// }
 
 
 // === Chapter ===
@@ -409,7 +347,7 @@ const bookQueue = async.queue(async (task, callback) => {
 }, 1); // Process one book at a time
 
 // === Master Function ===
-export async function generateBookS(bookTopic, userId) {
+export async function generateBookMedd(bookTopic, userId) {
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`; // Unique ID per user and topic
   logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
 
@@ -463,7 +401,6 @@ export async function generateBookS(bookTopic, userId) {
   }
 }
 
-
 // === API Wrapper ===
 export function queueBookGeneration(bookTopic, userId) {
   return new Promise((resolve, reject) => {
@@ -477,9 +414,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
-
 
 
 
