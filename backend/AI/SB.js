@@ -122,7 +122,7 @@ async function askAI(prompt, userId, bookTopic) {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer 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",
+        "Authorization": "Bearer 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",
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost", // Optional but recommended
         "X-Title": "Hailu AI Book Generator" // Optional
