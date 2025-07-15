@@ -83,7 +83,7 @@ function trimHistory(messages) {
   return tocMessage ? [{
     role: "system",
     content:
-      "Your name is Hailu. You are a kind and intelligent researcher who explains complex topics clearly and patiently. Always explain every detail using simple, clear language. Break down complicated ideas step-by-step, and use relatable, human-like examples. Focus strictly on the requested topic and ignore anything unrelated.\n\n" +
+      "You are Hailu, a thoughtful and intelligent researcher who explains complex topics in a clear, honest, and human way. Your job is to write high-quality research content that sounds natural, informative, and grounded in real facts. You always speak with clarity and structure, using examples, analogies, and step-by-step explanations when needed. Avoid generic or vague content. Focus on depth, real-world relevance, and clear logic. If a detail is speculative or fictional, clearly label it as such. Always stay on-topic."
       tocMessage.content,
   }] : [];
 }
@@ -313,25 +313,73 @@ async function generatePDF(content, outputPath) {
 function generatePrompts(bookTopic) {
   return [
     // Title & Abstract
-    `As Hailu, you are going to follow this instruction that I will give you. First, create a proper, clear, and catchy research paper title about "${bookTopic}". Then write a 200-word abstract. Use a simple, friendly tone. The abstract should summarize what the paper is about, how it was done, and what the main idea is. Use markdown headers like "# Title" and "# Abstract". After you write the abstract, stop responding.`,
-
+`As Hailu, write a research paper title and abstract about "${bookTopic}". 
+- Start with a strong, clear, and catchy title that sounds professional.
+- Then, write a 200-word abstract using markdown headers: "# Title" and "# Abstract".
+- The abstract should briefly cover:
+   - What the paper is about
+   - Why this topic matters
+   - How the research was done
+   - What was found or argued
+   - Why the reader should care
+- Use clear, confident language that sounds like a real person explaining it to someone smart but new to the topic.
+Stop after the abstract.`,
+    
+    
     // Introduction
-    `As Hailu, you are going to follow this instruction that I will give you. Write a 600-word introduction for a research paper on "${bookTopic}". Explain what it is, why it's important, and what the paper will explore. Use markdown with sections like "## Background", "## Purpose", and "## Importance". Use a simple tone, clear structure, and give an example or story if needed. After you finish the introduction, stop responding.`,
-
+`As Hailu, write a strong and clear introduction for a research paper on "${bookTopic}" (around 600 words).
+- Use markdown headers: "## Background", "## Purpose", and "## Importance".
+- In the **Background**, explain the topic and recent context.
+- In the **Purpose**, describe what this paper will explore or prove.
+- In **Importance**, explain why it matters globally or socially.
+- Use real-world examples, vivid scenarios, or short analogies to make your points memorable.
+- Your tone should be professional, clear, and grounded—not robotic or generic.
+Stop after the introduction.`,
+    
     // Methodology
-    `As Hailu, write the methodology section of a research paper about "${bookTopic}". Use markdown headers like "## Data Collection" and "## Analysis". Explain in simple terms how the data or information was gathered and how it was analyzed. Keep the tone friendly and clear. Use examples or imaginary steps if needed to make it understandable. Do not talk about results or other sections. Stop responding after the methodology.`,
+`As Hailu, write the methodology section of a research paper on "${bookTopic}" using markdown headers.
+- Use: "## Data Collection", "## Analysis", and (if needed) "## Tools Used".
+- Clearly explain **how information was gathered** — use realistic sources like interviews, surveys, reports, news content, etc. If fictional examples are used, say so clearly.
+- Then explain **how it was analyzed** — e.g., text analysis, comparison methods, social media scraping, or expert review.
+- Keep the language simple but informative, like a smart person explaining to a curious student.
+Stop after the methodology.`,
 
     // Findings
-    `As Hailu, write the findings section for a research paper about "${bookTopic}". Share what was discovered, observed, or noticed. Use markdown headings to organize the content clearly. Use simple examples or even a small fictional table or diagram to help explain the findings. Focus only on the results, not the interpretation. Keep the tone clear, simple, and helpful. Stop after the findings.`,
+`As Hailu, write the findings section for a research paper on "${bookTopic}".
+- Use markdown headers like "## Key Observations", "## Notable Examples", or "## Data Highlights".
+- Present what was discovered—either from analysis, data, or observed behavior.
+- Use tables, bullet points, or charts (written out) if helpful.
+- Keep the tone neutral and factual—don’t interpret results yet.
+- Avoid repeating the introduction or methodology.
+Stop after the findings.`,
 
     // Discussion
-    `As Hailu, write the discussion section of a research paper about "${bookTopic}". Explain what the findings mean and why they matter. Use markdown headings like "## Interpretation", "## Implications", and "## Limitations". Help the reader think more deeply about the topic, using a simple tone and clear logic. Avoid restating the full findings or talking about unrelated things. Stop after the discussion.`,
-
+`As Hailu, write the discussion section for the research paper on "${bookTopic}".
+- Use markdown headers: "## Interpretation", "## Implications", and "## Limitations".
+- In **Interpretation**, explain what the findings mean and what patterns or truths they suggest.
+- In **Implications**, explain what this means for society, politics, or individuals.
+- In **Limitations**, admit what wasn't perfect or still needs to be explored.
+- Avoid summarizing the whole paper again—this is for thinking deeper, not repeating.
+Stop after the discussion.`,
+    
     // Conclusion
-    `As Hailu, write the conclusion of a research paper about "${bookTopic}". Summarize the key points in around 300 words. Explain why this topic matters and what should happen next (like more research or learning). Use markdown header "## Conclusion". Make it inspiring and easy to understand, as if you were guiding a teenager. Stop after the conclusion.`,
+`As Hailu, write a clear and inspiring conclusion (around 300 words) for a research paper on "${bookTopic}".
+- Use the markdown header "## Conclusion".
+- Summarize the key takeaways simply and clearly.
+- End with a thought about what should happen next: more research, education, action, or caution.
+- Your tone should feel hopeful, grounded, and slightly personal—as if you're speaking to a curious young reader.
+Stop after the conclusion.`,
 
     // References
-    `As Hailu, write the references section for a research paper on "${bookTopic}". Use markdown header "## References". List atleast 5 reliable resources. For each resource, give a title, link (if possible), and a short 1–2 sentence explanation of why it’s helpful. Do not use complex sources or academic journals—keep it simple and useful for a beginner. Stop after the references.`
+`As Hailu, write the references section for a research paper on "${bookTopic}".
+- Use the markdown header "## References".
+- List at least 5 relevant and reliable resources.
+- For each, include:
+   - Title
+   - Link (if available)
+   - A 1–2 sentence explanation of what it offers and why it’s useful.
+- Only use simple, beginner-friendly sources: articles, websites, and readable research—not technical PDFs or deep academic journals.
+Stop after the references.`
   ];
 }
 
@@ -416,3 +464,35 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ // `As Hailu, you are going to follow this instruction that I will give you. Write a 600-word introduction for a research paper on "${bookTopic}". Explain what it is, why it's important, and what the paper will explore. Use markdown with sections like "## Background", "## Purpose", and "## Importance". Use a simple tone, clear structure, and give an example or story if needed. After you finish the introduction, stop responding.`,
+
+ //    // Methodology
+ //    `As Hailu, write the methodology section of a research paper about "${bookTopic}". Use markdown headers like "## Data Collection" and "## Analysis". Explain in simple terms how the data or information was gathered and how it was analyzed. Keep the tone friendly and clear. Use examples or imaginary steps if needed to make it understandable. Do not talk about results or other sections. Stop responding after the methodology.`,
+
+ //    // Findings
+ //    `As Hailu, write the findings section for a research paper about "${bookTopic}". Share what was discovered, observed, or noticed. Use markdown headings to organize the content clearly. Use simple examples or even a small fictional table or diagram to help explain the findings. Focus only on the results, not the interpretation. Keep the tone clear, simple, and helpful. Stop after the findings.`,
+
+ //    // Discussion
+ //    `As Hailu, write the discussion section of a research paper about "${bookTopic}". Explain what the findings mean and why they matter. Use markdown headings like "## Interpretation", "## Implications", and "## Limitations". Help the reader think more deeply about the topic, using a simple tone and clear logic. Avoid restating the full findings or talking about unrelated things. Stop after the discussion.`,
+
+ //    // Conclusion
+ //    `As Hailu, write the conclusion of a research paper about "${bookTopic}". Summarize the key points in around 300 words. Explain why this topic matters and what should happen next (like more research or learning). Use markdown header "## Conclusion". Make it inspiring and easy to understand, as if you were guiding a teenager. Stop after the conclusion.`,
+
+ //    // References
+ //    `As Hailu, write the references section for a research paper on "${bookTopic}". Use markdown header "## References". List atleast 5 reliable resources. For each resource, give a title, link (if possible), and a short 1–2 sentence explanation of why it’s helpful. Do not use complex sources or academic journals—keep it simple and useful for a beginner. Stop after the references.`
+ //  ];
