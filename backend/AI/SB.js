@@ -40,6 +40,7 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
 // Init
+const OPENROUTER_API_KEY = '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';
 //const together = new Together({
 //  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
 //});
@@ -110,6 +111,7 @@ function combineChapters(files) {
   fs.writeFileSync(path.join(OUTPUT_DIR, COMBINED_FILE), combined);
   return combined;
 }
+//"Authorization": `Bearer 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`,
 
 // === AI ===
 async function askAI(prompt, userId, bookTopic) {
@@ -118,27 +120,27 @@ async function askAI(prompt, userId, bookTopic) {
   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
 
   try {
+    // Call OpenRouter API
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer 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`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://bookgenai.vercel.app",
-        "X-Title": "Book Generator"
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-         model: "moonshotai/kimi-k2:free",
-         messages,
-         temperature: 0.6,
-         top_p: 0.9,
-         presence_penalty: 0.3,
-         frequency_penalty: 0.3,
-         max_tokens: 3000
-       })
+        model: "deepseek/deepseek-chat-v3-0324:free", // adjust model if needed
+        messages: messages
+      })
     });
 
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`OpenRouter API error: ${response.status} - ${errText}`);
+    }
+
     const data = await response.json();
-    let reply = data?.choices?.[0]?.message?.content ?? ''
+
+    let reply = data.choices[0].message.content
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
       .trim();
@@ -157,7 +159,7 @@ async function askAI(prompt, userId, bookTopic) {
     userHistories.set(userId, history);
     saveConversationHistory(userId, history);
 
-    logger.info(`✅ AI response saved for [${userId}] on topic "${bookTopic}"`);
+    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
     return reply;
 
   } catch (error) {
@@ -165,60 +167,6 @@ async function askAI(prompt, userId, bookTopic) {
     throw error;
   }
 }
-
-// async function askAI(prompt, userId, bookTopic) {
-//   const history = userHistories.get(userId) || [];
-//   const trimmedHistory = trimHistory(history);
-//   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
-
-//   try {
-//     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-//       method: "POST",
-//       headers: {
-//         "Authorization": `Bearer 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`,
-//         "Content-Type": "application/json",
-//         "HTTP-Referer": "https://bookgenai.vercel.app",
-//         "X-Title": "Book Generator"
-//       },
-//       body: JSON.stringify({
-//         model: "moonshotai/kimi-k2:free",
-//         messages,
-//         temperature: 0.6,
-//         top_p: 0.9,
-//         presence_penalty: 0.3,
-//         frequency_penalty: 0.3,
-//         max_tokens: 4000
-//       })
-//     });
-
-//     const data = await response.json();
-//     let reply = data?.choices?.[0]?.message?.content ?? '';
-
-//     // Flexible topic validation (word-based match)
-//     const topicWords = bookTopic.toLowerCase().split(/\s+/);
-//     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
-
-//     if (!isRelevant) {
-//       logger.warn(`🛑 Irrelevant output detected for [${userId}] on topic "${bookTopic}": ${reply.slice(0, 80)}...`);
-//       throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
-//     }
-
-//     history.push({ role: 'user', content: prompt });
-//     history.push({ role: 'assistant', content: reply });
-//     userHistories.set(userId, history);
-//     saveConversationHistory(userId, history);
-
-//     logger.info(`✅ AI response saved for [${userId}] on topic "${bookTopic}"`);
-//     return reply;
-
-//   } catch (error) {
-//     logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
-//     throw error;
-//   }
-// }
-
-
-
 
 
 // === Chapter ===
