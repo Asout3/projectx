@@ -120,7 +120,7 @@ async function askAI(prompt, userId, bookTopic) {
   try {
     const response = await together.chat.completions.create({
       messages,
-      model: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+      model: "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
       top_p: 0.9,                 // balance of creativity and clarity
       temperature: 0.6,           // keeps things focused but still human
       presence_penalty: 0.3,      // allows gentle repetition where helpful
