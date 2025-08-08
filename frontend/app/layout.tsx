@@ -56,78 +56,87 @@
 //     </html>
 //   );
 // }
-"use client";
 
-import Link from "next/link";
-import { motion } from "framer-motion";
-import { Button } from "@heroui/button";
+import "@/styles/globals.css";
+import { Metadata, Viewport } from "next";
+import clsx from "clsx";
 
-export default function HomePage() {
+import { Providers } from "./providers";
+import { siteConfig } from "@/config/site";
+import { ThemeSwitch } from "@/components/theme-switch";
+import CustomNavbar from "@/components/navbar";
+
+export const metadata: Metadata = {
+  title: {
+    default: siteConfig.name,
+    template: `%s - ${siteConfig.name}`,
+  },
+  description: siteConfig.description,
+  icons: {
+    icon: "/favicon.ico",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f9fafb" }, // light bg
+    { media: "(prefers-color-scheme: dark)", color: "#111827" }, // dark bg
+  ],
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col items-center justify-center text-center px-6">
-      {/* Hero Section */}
-      <motion.h1
-        className="text-5xl sm:text-6xl font-extrabold mb-6 bg-gradient-to-r from-green-400 via-blue-400 to-green-300 text-transparent bg-clip-text"
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
+    <html suppressHydrationWarning lang="en" className="scroll-smooth">
+      <head />
+      <body
+        className={clsx(
+          "min-h-screen font-inter antialiased bg-gray-50 text-gray-900 transition-colors duration-500 dark:bg-gray-900 dark:text-gray-100"
+        )}
       >
-        AI Book Generator
-      </motion.h1>
+        <Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>
+          <div className="relative flex flex-col min-h-screen">
+            {/* Navbar with glass blur background that changes color based on theme */}
+            <header
+              className="
+                fixed top-0 left-0 w-full z-50
+                bg-white/60 dark:bg-gray-900/60
+                backdrop-blur-md
+                transition-colors duration-500
+                shadow-sm
+              "
+            >
+              <CustomNavbar />
+            </header>
 
-      <motion.p
-        className="text-lg text-gray-300 max-w-2xl mb-8"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2, duration: 0.6 }}
-      >
-        Turn your ideas into complete books in minutes using cutting-edge AI technology.  
-        From brainstorming to publishing — all in one platform.
-      </motion.p>
+            {/* Main content area with top padding so content doesn't go under fixed navbar */}
+            <main className="flex-grow pt-20 px-6 max-w-7xl mx-auto">
+              {children}
+            </main>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4, duration: 0.6 }}
-      >
-        <Link href="/dash">
-          <Button
-            size="lg"
-            className="bg-green-500 hover:bg-green-400 text-black font-bold rounded-xl shadow-lg"
-          >
-            Start Generating
-          </Button>
-        </Link>
-      </motion.div>
-
-      {/* Features */}
-      <section className="mt-24 grid grid-cols-1 sm:grid-cols-3 gap-10 max-w-6xl">
-        <FeatureCard
-          title="Instant Creation"
-          desc="Generate entire books from a single prompt in seconds."
-        />
-        <FeatureCard
-          title="Custom Styles"
-          desc="Pick your genre, tone, and structure for unique results."
-        />
-        <FeatureCard
-          title="Export Anywhere"
-          desc="Download as PDF, ePub, or share instantly."
-        />
-      </section>
-    </div>
-  );
-}
-
-function FeatureCard({ title, desc }: { title: string; desc: string }) {
-  return (
-    <motion.div
-      className="p-6 rounded-xl bg-gradient-to-br from-blue-950 to-black border border-green-400/20 hover:border-green-400 transition"
-      whileHover={{ scale: 1.05 }}
-    >
-      <h3 className="text-xl font-bold text-green-400 mb-3">{title}</h3>
-      <p className="text-gray-300">{desc}</p>
-    </motion.div>
+            {/* Footer with same glass blur background */}
+            <footer
+              className="
+                w-full py-6
+                bg-white/60 dark:bg-gray-900/60
+                backdrop-blur-md
+                shadow-inner
+                text-center text-sm text-gray-600 dark:text-gray-400
+                transition-colors duration-500
+              "
+            >
+              © {new Date().getFullYear()} Asout3 — All rights reserved
+              <div className="mt-2 flex justify-center">
+                <ThemeSwitch />
+              </div>
+            </footer>
+          </div>
+        </Providers>
+      </body>
+    </html>
   );
 }
 
