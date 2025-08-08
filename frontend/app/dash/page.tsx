@@ -14,7 +14,7 @@ import {
 } from "@heroui/react";
 
 const api = axios.create({
-  baseURL: "https://projectx-production-253c.up.railway.app",
+  baseURL: "https://projectx-wvgb.onrender.com",
   headers: {
     "Content-Type": "application/json",
   },
