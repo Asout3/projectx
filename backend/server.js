@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import apiRoutes from './routes/api.js';  // Note the added .js extension
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
 // hello this is mikiyas 
 import dotenv from 'dotenv';
