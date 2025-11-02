@@ -9,7 +9,7 @@ import async from 'async';
 import winston from 'winston';
 import { addTable } from 'pdfkit-table';
 import katex from 'katex';
-import { SVGtoPDF } from 'svg2pdf.js';
+import SVGtoPDF from 'svg2pdf.js';
 
 // Load environment variables
 //dotenv.config();
