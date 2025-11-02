@@ -1,15 +1,14 @@
 import { Together } from "together-ai";
 import { marked } from 'marked';
-import { hljs } from 'highlight.js';
-import { PDFDocument } from 'pdfkit';
-import { fs } from 'fs';
-import { path } from 'path';
+import hljs from 'highlight.js';
+import PDFKit from 'pdfkit';
+import fs from 'fs';
+import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import { async } from 'async';
-import { winston } from 'winston';
+import async from 'async';
+import winston from 'winston';
 import { addTable } from 'pdfkit-table';
-import { katex } from 'katex';
+import katex from 'katex';
 import { SVGtoPDF } from 'svg2pdf.js';
 
 // Load environment variables
