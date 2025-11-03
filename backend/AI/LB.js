@@ -10,7 +10,9 @@ import winston from 'winston';
 import pkg from 'pdfkit-table';
 const { addTable } = pkg;
 import katex from 'katex';
-import { SVGtoPDF } from 'svg2pdf.js';
+import pkg2pdf from 'svg2pdf.js';
+const { SVGtoPDF } = pkg2pdf;
+
 
 // Load environment variables
 //dotenv.config();
