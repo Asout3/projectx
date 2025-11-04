@@ -313,8 +313,8 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 // }
 
 
-// === PDF Generation  (drop-in replacement) ===
-async function generatePDF(markdown, outputPath) {
+// === PDF Generation  (complete drop-in) ===
+async function generatePDF(content, outputPath) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
@@ -326,12 +326,14 @@ async function generatePDF(markdown, outputPath) {
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
+      // -----  guarantee a page exists before reading .width  -----
+      doc.addPage();
+      const USABLE_W = doc.page.width - 2 * 50;
+
       const pages = [];
       doc.on('pageAdded', () => pages.push(doc.page));
 
       // ---------- helpers ----------
-      const USABLE_W = doc.page.width - 2 * 50;
-
       function parseInline(text) {              // bold / italic / inline-code
         const reg = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
         let last = 0, m;
@@ -360,8 +362,8 @@ async function generatePDF(markdown, outputPath) {
         lang = hljs.getLanguage(lang) ? lang : 'plaintext';
         const html = hljs.highlight(code, { language: lang }).value;
         doc.save().font('Courier').fontSize(9).fillColor('#2d3748');
-        html.split(/\n/).forEach(l => {
-          const txt = l.replace(/<[^>]+>/g, ''); // crude strip
+        html.split(/\n/).forEach(ln => {
+          const txt = ln.replace(/<[^>]+>/g, '');
           doc.text(txt, 60, doc.y, { width: USABLE_W - 20 });
         });
         doc.fillColor('black').restore();
@@ -377,14 +379,12 @@ async function generatePDF(markdown, outputPath) {
         } catch { doc.text(`[Math: ${tex}]`); }
       }
 
-      // ---------- first page ----------
-      doc.addPage();
-      doc.font('Helvetica');
-
       // ---------- tokeniser ----------
-      const lines = markdown.split('\n');
+      const lines = content.split('\n');
       let inCode = false, codeLang = '', codeBuf = [];
       let inTable = false, tbl = [];
+
+      doc.font('Helvetica');
 
       for (let raw of lines) {
         const ln = raw.trimEnd();
@@ -406,7 +406,7 @@ async function generatePDF(markdown, outputPath) {
         if (inTable && !ln.includes('|')) {
           const hdr = tbl[0], rows = tbl.slice(2);
           const headers = hdr.split('|').slice(1, -1).map(c => c.trim());
-          const data = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
+          const data  = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
           addTable(doc, { headers, rows: data, width: USABLE_W });
           tbl = []; inTable = false; doc.moveDown();
         }
@@ -443,7 +443,7 @@ async function generatePDF(markdown, outputPath) {
       }
       if (inTable) { // doc ended in table
         const headers = tbl[0].split('|').slice(1, -1).map(c => c.trim());
-        const data = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
+        const data  = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
         addTable(doc, { headers, rows: data, width: USABLE_W });
       }
 
