@@ -407,7 +407,7 @@ async function generatePDF(content, outputPath) {
           const hdr = tbl[0], rows = tbl.slice(2);
           const headers = hdr.split('|').slice(1, -1).map(c => c.trim());
           const data  = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-          addTable(doc, { headers, rows: data, width: USABLE_W });
+          doc.addTable({ headers, rows: data, width: USABLE_W });
           tbl = []; inTable = false; doc.moveDown();
         }
 
