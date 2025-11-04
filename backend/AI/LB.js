@@ -312,11 +312,14 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 //   });
 // }
 
-
-// === PDF Generation  (complete drop-in) ===
+// === PDF Generation  (copy / paste entire block) ===
 async function generatePDF(content, outputPath) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {          // async so we can use top-level await
     try {
+      // lazy-load pdfkit & pdfkit-table so the patch runs
+      const PDFDocument = (await import('pdfkit')).default;
+      const PDFTable    = (await import('pdfkit-table')).default;
+
       const doc = new PDFDocument({
         autoFirstPage: false,
         bufferPages: true,
@@ -326,7 +329,11 @@ async function generatePDF(content, outputPath) {
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      // -----  guarantee a page exists before reading .width  -----
+      // *****  inject doc.addTable()  *****
+      new PDFTable(doc);
+      // ************************************
+
+      // guarantee a page exists before reading .width
       doc.addPage();
       const USABLE_W = doc.page.width - 2 * 50;
 
@@ -444,7 +451,7 @@ async function generatePDF(content, outputPath) {
       if (inTable) { // doc ended in table
         const headers = tbl[0].split('|').slice(1, -1).map(c => c.trim());
         const data  = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-        addTable(doc, { headers, rows: data, width: USABLE_W });
+        doc.addTable({ headers, rows: data, width: USABLE_W });
       }
 
       // header / footer
