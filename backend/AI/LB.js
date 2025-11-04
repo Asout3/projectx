@@ -312,11 +312,10 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 //   });
 // }
 
-// === PDF Generation  (copy / paste entire block) ===
+// === PDF Generation  (full replacement) ===
 async function generatePDF(content, outputPath) {
-  return new Promise(async (resolve, reject) => {          // async so we can use top-level await
+  return new Promise(async (resolve, reject) => {
     try {
-      // lazy-load pdfkit & pdfkit-table so the patch runs
       const PDFDocument = (await import('pdfkit')).default;
       const PDFTable    = (await import('pdfkit-table')).default;
 
@@ -329,18 +328,14 @@ async function generatePDF(content, outputPath) {
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      // *****  inject doc.addTable()  *****
-      new PDFTable(doc);
-      // ************************************
-
-      // guarantee a page exists before reading .width
-      doc.addPage();
+      new PDFTable(doc);          // inject table method
+      doc.addPage();              // guarantee page → width readable
       const USABLE_W = doc.page.width - 2 * 50;
 
       const pages = [];
       doc.on('pageAdded', () => pages.push(doc.page));
 
-      // ---------- helpers ----------
+      /* ---------- helpers ---------- */
       function parseInline(text) {              // bold / italic / inline-code
         const reg = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
         let last = 0, m;
@@ -386,7 +381,7 @@ async function generatePDF(content, outputPath) {
         } catch { doc.text(`[Math: ${tex}]`); }
       }
 
-      // ---------- tokeniser ----------
+      /* ---------- tokeniser ---------- */
       const lines = content.split('\n');
       let inCode = false, codeLang = '', codeBuf = [];
       let inTable = false, tbl = [];
@@ -408,13 +403,18 @@ async function generatePDF(content, outputPath) {
         }
         if (inCode) { codeBuf.push(raw); continue; }
 
-        // table
+        // table  (core-font only)
         if (ln.includes('|')) { tbl.push(ln); inTable = true; continue; }
         if (inTable && !ln.includes('|')) {
           const hdr = tbl[0], rows = tbl.slice(2);
           const headers = hdr.split('|').slice(1, -1).map(c => c.trim());
           const data  = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-          doc.addTable({ headers, rows: data, width: USABLE_W });
+          doc.addTable({
+            headers,
+            rows: data,
+            width: USABLE_W,
+            options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
+          });
           tbl = []; inTable = false; doc.moveDown();
         }
 
@@ -451,7 +451,12 @@ async function generatePDF(content, outputPath) {
       if (inTable) { // doc ended in table
         const headers = tbl[0].split('|').slice(1, -1).map(c => c.trim());
         const data  = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-        doc.addTable({ headers, rows: data, width: USABLE_W });
+        doc.addTable({
+          headers,
+          rows: data,
+          width: USABLE_W,
+          options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
+        });
       }
 
       // header / footer
