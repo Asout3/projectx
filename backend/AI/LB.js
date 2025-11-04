@@ -382,7 +382,7 @@ async function generatePDF(markdown, outputPath) {
       doc.font('Helvetica');
 
       // ---------- tokeniser ----------
-      const lines = markdown.split(/\n');
+      const lines = markdown.split('\n');
       let inCode = false, codeLang = '', codeBuf = [];
       let inTable = false, tbl = [];
 
