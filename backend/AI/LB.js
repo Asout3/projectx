@@ -416,10 +416,11 @@ async function generatePDF(content, outputPath) {
       });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
-
       doc.addPage();
+
       const USABLE_W = doc.page.width - 120;
       const pages = [];
+
       doc.on('pageAdded', () => pages.push(doc.page));
 
       // === Styles ===
@@ -427,17 +428,43 @@ async function generatePDF(content, outputPath) {
       const FONT_BOLD = 'Helvetica-Bold';
       const FONT_ITALIC = 'Helvetica-Oblique';
       const FONT_MONO = 'Courier';
-
       const BASE_FONT_SIZE = 13;
       const LINE_SPACING = 1.6;
       const COLOR_TEXT = '#1a1a1a';
       const COLOR_LINK = '#007acc';
       const COLOR_HEADING = '#2c3e50';
 
-      // === Helper functions ===
+      // === Markdown helpers ===
+      function renderInline(text) {
+        const regex = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
+        let last = 0;
+        let match;
+        doc.save();
+        while ((match = regex.exec(text)) !== null) {
+          const before = text.slice(last, match.index);
+          if (before) doc.text(before, { continued: true });
+          if (match[2]) {
+            doc.font(FONT_BOLD).text(match[2], { continued: true });
+            doc.font(FONT_MAIN);
+          } else if (match[4]) {
+            doc.font(FONT_ITALIC).text(match[4], { continued: true });
+            doc.font(FONT_MAIN);
+          } else if (match[6]) {
+            doc.font(FONT_MONO).fontSize(BASE_FONT_SIZE - 2)
+               .text(match[6], { continued: true })
+               .font(FONT_MAIN).fontSize(BASE_FONT_SIZE);
+          }
+          last = match.index + match[0].length;
+        }
+        const rest = text.slice(last);
+        if (rest) doc.text(rest, { continued: false });
+        doc.restore();
+      }
+
       function addHeading(text, level) {
         const sizes = { 1: 24, 2: 20, 3: 16 };
         const font = level === 3 ? FONT_BOLD + 'Oblique' : FONT_BOLD;
+        text = text.replace(/[*_#]+/g, '').trim();
         doc.moveDown(level === 1 ? 1.5 : 1)
           .font(font)
           .fontSize(sizes[level])
@@ -447,17 +474,24 @@ async function generatePDF(content, outputPath) {
           .moveDown(0.5);
       }
 
-      function addParagraph(text) {
-        if (!text.trim()) { doc.moveDown(0.7); return; }
+      function addParagraph(line) {
+        if (!line.trim()) { doc.moveDown(0.7); return; }
         doc.font(FONT_MAIN)
           .fontSize(BASE_FONT_SIZE)
-          .fillColor(COLOR_TEXT)
-          .text(text, {
-            width: USABLE_W,
-            align: 'justify',
-            lineGap: BASE_FONT_SIZE * (LINE_SPACING - 1)
-          });
+          .fillColor(COLOR_TEXT);
+        renderInline(line);
         doc.moveDown(0.4);
+      }
+
+      function addList(items, ordered = false) {
+        doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE).fillColor(COLOR_TEXT);
+        items.forEach((item, i) => {
+          const prefix = ordered ? `${i + 1}. ` : '• ';
+          doc.text(prefix, { continued: true });
+          renderInline(item.trim());
+          doc.moveDown(0.3);
+        });
+        doc.moveDown(0.5);
       }
 
       function addCodeBlock(code, lang = 'plaintext') {
@@ -489,14 +523,14 @@ async function generatePDF(content, outputPath) {
         }
       }
 
-      // === Markdown-like tokeniser ===
+      // === Parse ===
       const lines = content.split('\n');
       let inCode = false, codeLang = '', codeBuf = [];
+      let listBuf = [], orderedList = false;
 
       for (const raw of lines) {
         const line = raw.trimEnd();
 
-        // code fences
         if (line.startsWith('```')) {
           if (inCode) {
             addCodeBlock(codeBuf.join('\n'), codeLang);
@@ -508,28 +542,45 @@ async function generatePDF(content, outputPath) {
         }
         if (inCode) { codeBuf.push(raw); continue; }
 
-        // headings
-        if (line.startsWith('# ')) { addHeading(line.slice(2), 1); continue; }
-        if (line.startsWith('## ')) { addHeading(line.slice(3), 2); continue; }
-        if (line.startsWith('### ')) { addHeading(line.slice(4), 3); continue; }
+        // Lists
+        if (/^[-*]\s+/.test(line)) {
+          listBuf.push(line.replace(/^[-*]\s+/, ''));
+          orderedList = false;
+          continue;
+        }
+        if (/^\d+\.\s+/.test(line)) {
+          listBuf.push(line.replace(/^\d+\.\s+/, ''));
+          orderedList = true;
+          continue;
+        }
+        if (listBuf.length && !line.match(/^[-*\d]/)) {
+          addList(listBuf, orderedList);
+          listBuf = [];
+        }
 
-        // math
+        // Headings
+        if (line.startsWith('# ')) { addHeading(line, 1); continue; }
+        if (line.startsWith('## ')) { addHeading(line, 2); continue; }
+        if (line.startsWith('### ')) { addHeading(line, 3); continue; }
+
+        // Math
         if (line.startsWith('$$') && line.endsWith('$$')) {
           addMath(line.slice(2, -2), true); continue;
         }
 
-        // normal text
+        // Normal paragraph
         addParagraph(line);
       }
+      if (listBuf.length) addList(listBuf, orderedList);
 
-      // === Header / Footer ===
-      const totalPages = doc.bufferedPageRange().count;
-      for (let i = 0; i < totalPages; i++) {
+      // === Footer ===
+      const total = doc.bufferedPageRange().count;
+      for (let i = 0; i < total; i++) {
         doc.switchToPage(i);
         const { width, height } = doc.page;
         doc.fontSize(9).fillColor('#999');
         doc.text('bookgenai.vercel.app', 60, 30, { width: width - 120, align: 'center' });
-        doc.text(`Page ${i + 1} of ${totalPages}`, 60, height - 50, { width: width - 120, align: 'center' });
+        doc.text(`Page ${i + 1} of ${total}`, 60, height - 50, { width: width - 120, align: 'center' });
         doc.fillColor(COLOR_TEXT);
       }
 
