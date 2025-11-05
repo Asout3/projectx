@@ -312,13 +312,175 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 //   });
 // }
 
-// === PDF Generation  (full replacement) ===
+// // === PDF Generation  (full replacement) ===
+// async function generatePDF(content, outputPath) {
+//   return new Promise(async (resolve, reject) => {
+//     try {
+//       const PDFDocument = (await import('pdfkit')).default;
+//       const PDFTable    = (await import('pdfkit-table')).default;
+
+//       const doc = new PDFDocument({
+//         autoFirstPage: false,
+//         bufferPages: true,
+//         margin: 50,
+//         size: 'A4'
+//       });
+//       const stream = fs.createWriteStream(outputPath);
+//       doc.pipe(stream);
+
+//       new PDFTable(doc);          // inject table method
+//       doc.addPage();              // guarantee page → width readable
+//       const USABLE_W = doc.page.width - 2 * 50;
+
+//       const pages = [];
+//       doc.on('pageAdded', () => pages.push(doc.page));
+
+//       /* ---------- helpers ---------- */
+//       function parseInline(text) {              // bold / italic / inline-code
+//         const reg = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
+//         let last = 0, m;
+//         doc.save();
+//         while ((m = reg.exec(text)) !== null) {
+//           const before = text.slice(last, m.index);
+//           if (before) doc.text(before, { continued: true });
+//           if (m[2]) { // bold
+//             doc.font('Helvetica-Bold').text(m[2], { continued: true });
+//             doc.font('Helvetica');
+//           } else if (m[4]) { // italic
+//             doc.font('Helvetica-Oblique').text(m[4], { continued: true });
+//             doc.font('Helvetica');
+//           } else if (m[6]) { // inline code
+//             doc.fontSize(9).font('Courier').text(m[6], { continued: true })
+//                .fontSize(12).font('Helvetica');
+//           }
+//           last = m.index + m[0].length;
+//         }
+//         const rest = text.slice(last);
+//         if (rest) doc.text(rest, { continued: false });
+//         doc.restore();
+//       }
+
+//       function codeBlock(code, lang) {
+//         lang = hljs.getLanguage(lang) ? lang : 'plaintext';
+//         const html = hljs.highlight(code, { language: lang }).value;
+//         doc.save().font('Courier').fontSize(9).fillColor('#2d3748');
+//         html.split(/\n/).forEach(ln => {
+//           const txt = ln.replace(/<[^>]+>/g, '');
+//           doc.text(txt, 60, doc.y, { width: USABLE_W - 20 });
+//         });
+//         doc.fillColor('black').restore();
+//       }
+
+//       function mathLine(tex, display) {
+//         try {
+//           const html = katex.renderToString(tex, { throwOnError: false, displayMode: display });
+//           doc.save().font('Courier').fontSize(9).fillColor('#2b6cb0')
+//              .text(display ? ` ${tex} ` : tex, 55, doc.y,
+//                    { width: USABLE_W - 10, align: display ? 'center' : 'left' })
+//              .fillColor('black').restore();
+//         } catch { doc.text(`[Math: ${tex}]`); }
+//       }
+
+//       /* ---------- tokeniser ---------- */
+//       const lines = content.split('\n');
+//       let inCode = false, codeLang = '', codeBuf = [];
+//       let inTable = false, tbl = [];
+
+//       doc.font('Helvetica');
+
+//       for (let raw of lines) {
+//         const ln = raw.trimEnd();
+
+//         // code fence
+//         if (ln.startsWith('```')) {
+//           if (inCode) {
+//             codeBlock(codeBuf.join('\n'), codeLang);
+//             codeBuf = []; inCode = false; doc.moveDown();
+//           } else {
+//             inCode = true; codeLang = ln.slice(3);
+//           }
+//           continue;
+//         }
+//         if (inCode) { codeBuf.push(raw); continue; }
+
+//         // table  (core-font only)
+//         if (ln.includes('|')) { tbl.push(ln); inTable = true; continue; }
+//         if (inTable && !ln.includes('|')) {
+//           const hdr = tbl[0], rows = tbl.slice(2);
+//           const headers = hdr.split('|').slice(1, -1).map(c => c.trim());
+//           const data  = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
+//           doc.addTable({
+//             headers,
+//             rows: data,
+//             width: USABLE_W,
+//             options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
+//           });
+//           tbl = []; inTable = false; doc.moveDown();
+//         }
+
+//         // headings
+//         if (ln.startsWith('# ')) {
+//           doc.addPage().fontSize(24).font('Helvetica-Bold')
+//              .text(ln.replace('# ', ''), 50, 70, { align: 'center' })
+//              .moveDown(1.5);
+//           continue;
+//         }
+//         if (ln.startsWith('## ')) {
+//           doc.fontSize(18).font('Helvetica-Bold')
+//              .text(ln.replace('## ', ''), { underline: true })
+//              .moveDown(0.8);
+//           continue;
+//         }
+//         if (ln.startsWith('### ')) {
+//           doc.fontSize(14).font('Helvetica-BoldOblique')
+//              .text(ln.replace('### ', ''))
+//              .moveDown(0.6);
+//           continue;
+//         }
+//         if (!ln) { doc.moveDown(0.7); continue; }
+
+//         // math block
+//         if (ln.startsWith('$$') && ln.endsWith('$$')) {
+//           mathLine(ln.slice(2, -2), true); continue;
+//         }
+
+//         // normal paragraph
+//         parseInline(ln);
+//         doc.moveDown(0.4);
+//       }
+//       if (inTable) { // doc ended in table
+//         const headers = tbl[0].split('|').slice(1, -1).map(c => c.trim());
+//         const data  = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
+//         doc.addTable({
+//           headers,
+//           rows: data,
+//           width: USABLE_W,
+//           options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
+//         });
+//       }
+
+//       // header / footer
+//       const total = pages.length;
+//       pages.forEach((p, i) => {
+//         doc.switchToPage(i);
+//         doc.fontSize(9).fillColor('#888')
+//            .text('Generated by BookGen.AI', 50, 30, { lineBreak: false })
+//            .text(`Page ${i + 1} of ${total}`, 50, doc.page.height - 40,
+//                  { align: 'center', width: USABLE_W })
+//            .fillColor('black');
+//       });
+
+//       doc.end();
+//       stream.on('finish', () => resolve(outputPath));
+//     } catch (e) { reject(e); }
+//   });
+// }
+
+// === PDF Generation  (full replacement, no pdfkit-table) ===
 async function generatePDF(content, outputPath) {
   return new Promise(async (resolve, reject) => {
     try {
       const PDFDocument = (await import('pdfkit')).default;
-      const PDFTable    = (await import('pdfkit-table')).default;
-
       const doc = new PDFDocument({
         autoFirstPage: false,
         bufferPages: true,
@@ -328,14 +490,66 @@ async function generatePDF(content, outputPath) {
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      new PDFTable(doc);          // inject table method
       doc.addPage();              // guarantee page → width readable
       const USABLE_W = doc.page.width - 2 * 50;
 
       const pages = [];
       doc.on('pageAdded', () => pages.push(doc.page));
 
-      /* ---------- helpers ---------- */
+      /* ----------  TABLE DRAWER (plain PDFKit)  ---------- */
+      function drawTable(headers, rows) {
+        const colCount = headers.length;
+        if (!colCount) return;
+
+        // measure each column
+        const widths = Array(colCount).fill(0);
+        doc.font('Helvetica-Bold');
+        headers.forEach((h, i) => widths[i] = Math.max(widths[i], doc.widthOfString(h)));
+        doc.font('Helvetica');
+        rows.flat().forEach((c, i) => widths[i % colCount] = Math.max(widths[i % colCount], doc.widthOfString(c)));
+
+        const totalW = widths.reduce((a, b) => a + b, 0);
+        const scale  = Math.min(1, USABLE_W / totalW);
+        const cellW  = widths.map(w => w * scale);
+
+        const startY = doc.y + 5;
+        let y = startY;
+
+        // header row
+        doc.font('Helvetica-Bold').fontSize(10);
+        let x = 60;
+        headers.forEach((h, i) => {
+          doc.text(h, x, y, { width: cellW[i] - 4, align: 'left' });
+          x += cellW[i];
+        });
+        y += doc.heightOfString(headers[0], { width: cellW[0] }) + 6;
+
+        // data rows
+        doc.font('Helvetica').fontSize(10);
+        rows.forEach(row => {
+          x = 60;
+          row.forEach((cell, i) => {
+            doc.text(cell, x, y, { width: cellW[i] - 4, align: 'left' });
+            x += cellW[i];
+          });
+          y += Math.max(...row.map((c, i) => doc.heightOfString(c, { width: cellW[i] }))) + 5;
+        });
+
+        // grid lines
+        doc.save().lineWidth(0.5).strokeColor('#cccccc');
+        let lineX = 60;
+        for (let i = 0; i <= colCount; i++) {
+          doc.moveTo(lineX, startY - 2).lineTo(lineX, y + 2).stroke();
+          lineX += cellW[i] || 0;
+        }
+        doc.moveTo(60, startY - 2).lineTo(60 + cellW.reduce((a, b) => a + b, 0), startY - 2).stroke(); // top
+        doc.moveTo(60, y + 2).lineTo(60 + cellW.reduce((a, b) => a + b, 0), y + 2).stroke();           // bottom
+        doc.restore();
+
+        doc.y = y + 10;   // cursor below table
+      }
+
+      /* ----------  other helpers  ---------- */
       function parseInline(text) {              // bold / italic / inline-code
         const reg = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
         let last = 0, m;
@@ -381,7 +595,7 @@ async function generatePDF(content, outputPath) {
         } catch { doc.text(`[Math: ${tex}]`); }
       }
 
-      /* ---------- tokeniser ---------- */
+      /* ----------  tokeniser  ---------- */
       const lines = content.split('\n');
       let inCode = false, codeLang = '', codeBuf = [];
       let inTable = false, tbl = [];
@@ -403,18 +617,13 @@ async function generatePDF(content, outputPath) {
         }
         if (inCode) { codeBuf.push(raw); continue; }
 
-        // table  (core-font only)
+        // table
         if (ln.includes('|')) { tbl.push(ln); inTable = true; continue; }
         if (inTable && !ln.includes('|')) {
           const hdr = tbl[0], rows = tbl.slice(2);
           const headers = hdr.split('|').slice(1, -1).map(c => c.trim());
           const data  = rows.map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-          doc.addTable({
-            headers,
-            rows: data,
-            width: USABLE_W,
-            options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
-          });
+          drawTable(headers, data);
           tbl = []; inTable = false; doc.moveDown();
         }
 
@@ -451,12 +660,7 @@ async function generatePDF(content, outputPath) {
       if (inTable) { // doc ended in table
         const headers = tbl[0].split('|').slice(1, -1).map(c => c.trim());
         const data  = tbl.slice(2).map(r => r.split('|').slice(1, -1).map(c => c.trim()));
-        doc.addTable({
-          headers,
-          rows: data,
-          width: USABLE_W,
-          options: { fontSize: 10, font: 'Helvetica' }   // CORE FONT
-        });
+        drawTable(headers, data);
       }
 
       // header / footer
