@@ -1,6 +1,13 @@
 {
   "build": {
     "builder": "NIXPACKS",
+    "aptPackages": [
+      "libnss3",
+      "libgdk-pixbuf2.0-0",
+      "libgtk-3-0",
+      "libxss1",
+      "libasound2"
+    ],
     "root": "backend"
   },
   "start": {
