@@ -592,94 +592,170 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 //   });
 // }
 
-async function generatePDF(title, sections, outputPath) {
+async function generatePDF(content, outputPath) {
   return new Promise((resolve, reject) => {
     try {
+      if (!outputPath) throw new Error("outputPath is undefined");
+
+      const PDFDocument = require('pdfkit');
+      const fs = require('fs');
+      const hljs = require('highlight.js');
+      const katex = require('katex');
+
       const doc = new PDFDocument({
         size: 'A4',
-        margin: 50,
+        margin: 60,
+        bufferPages: true,
+        autoFirstPage: false
       });
 
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
+      doc.addPage();
 
-      const PAGE_WIDTH = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+      const USABLE_W = doc.page.width - 120;
+      const FONT_MAIN = 'Helvetica';
+      const FONT_BOLD = 'Helvetica-Bold';
+      const FONT_ITALIC = 'Helvetica-Oblique';
+      const FONT_MONO = 'Courier';
+      const BASE_FONT_SIZE = 13;
+      const COLOR_TEXT = '#1a1a1a';
+      const COLOR_HEADING = '#2c3e50';
 
-      // fonts
-      doc.registerFont('Regular', 'fonts/Inter-Regular.ttf');
-      doc.registerFont('Bold', 'fonts/Inter-Bold.ttf');
-      doc.registerFont('Mono', 'fonts/JetBrainsMono-Regular.ttf');
-
-      // header
-      doc.font('Bold').fontSize(22).text(title, { align: 'center' });
-      doc.moveDown(1.5);
-
-      const drawTable = (headers, rows) => {
-        if (!headers || !Array.isArray(rows)) return;
-
-        const usableWidth = PAGE_WIDTH;
-        const colCount = headers.length;
-        const colWidth = usableWidth / colCount;
-        const startY = doc.y;
-
-        doc.font('Bold').fontSize(10);
-        headers.forEach((h, i) => {
-          doc.rect(doc.x + colWidth * i, startY, colWidth, 20).stroke();
-          doc.text((h ?? '').toString(), doc.x + colWidth * i + 5, startY + 5, { width: colWidth - 10 });
-        });
-
-        let y = startY + 25;
-        doc.font('Regular').fontSize(10);
-        rows.forEach((r) => {
-          const rowY = y;
-          for (let i = 0; i < colCount; i++) {
-            const val = (r[i] ?? '').toString();
-            doc.rect(doc.x + colWidth * i, rowY, colWidth, 20).stroke();
-            doc.text(val, doc.x + colWidth * i + 5, rowY + 5, { width: colWidth - 10 });
+      /* --- Inline Renderer (bold, italic, code) --- */
+      function renderInline(text) {
+        if (!text) return;
+        const regex = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)([^`]+)\5/g;
+        let last = 0, m;
+        doc.save();
+        while ((m = regex.exec(text)) !== null) {
+          const before = text.slice(last, m.index);
+          if (before) doc.text(before, { continued: true });
+          if (m[2]) { doc.font(FONT_BOLD).text(m[2], { continued: true }).font(FONT_MAIN); }
+          else if (m[4]) { doc.font(FONT_ITALIC).text(m[4], { continued: true }).font(FONT_MAIN); }
+          else if (m[6]) {
+            doc.font(FONT_MONO).fontSize(BASE_FONT_SIZE - 2)
+               .text(m[6], { continued: true })
+               .font(FONT_MAIN).fontSize(BASE_FONT_SIZE);
           }
-          y += 25;
-        });
-        doc.moveDown(2);
-      };
-
-      for (const section of sections) {
-        if (!section) continue;
-
-        if (section.type === 'header') {
-          doc.addPage();
-          doc.font('Bold').fontSize(18).text(section.text || '', { align: 'left' });
-          doc.moveDown(0.8);
-        } else if (section.type === 'paragraph') {
-          doc.font('Regular').fontSize(12).text(section.text || '', { align: 'justify' });
-          doc.moveDown(1);
-        } else if (section.type === 'quote') {
-          doc.save();
-          doc.rect(doc.x - 2, doc.y - 2, PAGE_WIDTH + 4, 40).fill('#f0f0f0').stroke();
-          doc.fillColor('#333').font('Regular').fontSize(11).text(section.text || '', { align: 'left', indent: 10 });
-          doc.restore();
-          doc.moveDown(1.5);
-        } else if (section.type === 'code') {
-          doc.save();
-          doc.rect(doc.x - 2, doc.y - 2, PAGE_WIDTH + 4, 40).fill('#2e2e2e').stroke();
-          doc.fillColor('#fafafa').font('Mono').fontSize(10).text(section.text || '', { align: 'left', indent: 10 });
-          doc.restore();
-          doc.moveDown(1.5);
-        } else if (section.type === 'table') {
-          drawTable(section.headers, section.rows);
-        } else if (section.type === 'list') {
-          doc.font('Regular').fontSize(12);
-          for (const item of section.items || []) {
-            doc.text(`• ${(item ?? '').toString()}`, { align: 'left', indent: 15 });
-          }
-          doc.moveDown(1);
-        } else if (section.type === 'image') {
-          try {
-            doc.image(section.src, { width: PAGE_WIDTH, align: 'center' });
-            doc.moveDown(1);
-          } catch {
-            doc.font('Regular').fillColor('red').text('[Image load failed]');
-          }
+          last = m.index + m[0].length;
         }
+        const rest = text.slice(last);
+        if (rest) doc.text(rest, { continued: false });
+        doc.restore();
+      }
+
+      /* --- Headings --- */
+      function addHeading(line, level) {
+        const sizes = { 1: 24, 2: 18, 3: 15 };
+        const align = level === 1 ? 'center' : 'left';
+        doc.moveDown(level === 1 ? 1.2 : 0.8)
+           .font(level === 3 ? FONT_BOLD + 'Oblique' : FONT_BOLD)
+           .fontSize(sizes[level])
+           .fillColor(COLOR_HEADING)
+           .text(line.replace(/^#+\s*/, ''), { align, underline: level === 2 })
+           .fillColor(COLOR_TEXT)
+           .moveDown(0.5);
+      }
+
+      /* --- Paragraphs --- */
+      function addParagraph(line) {
+        if (!line.trim()) { doc.moveDown(0.7); return; }
+        doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE).fillColor(COLOR_TEXT);
+        renderInline(line);
+        doc.moveDown(0.4);
+      }
+
+      /* --- Lists --- */
+      function addList(items, ordered = false) {
+        doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE).fillColor(COLOR_TEXT);
+        items.forEach((item, i) => {
+          const prefix = ordered ? `${i + 1}. ` : '• ';
+          doc.text(prefix, { continued: true });
+          renderInline(item.trim());
+          doc.moveDown(0.3);
+        });
+        doc.moveDown(0.5);
+      }
+
+      /* --- Code Blocks --- */
+      function addCodeBlock(code, lang = 'plaintext') {
+        lang = hljs.getLanguage(lang) ? lang : 'plaintext';
+        const highlighted = hljs.highlight(code, { language: lang }).value.replace(/<[^>]+>/g, '');
+        const boxHeight = doc.heightOfString(highlighted, { width: USABLE_W }) + 10;
+        const yStart = doc.y;
+        doc.save()
+          .font(FONT_MONO)
+          .fontSize(BASE_FONT_SIZE - 2)
+          .fillColor('#2d3748')
+          .rect(60, yStart - 2, USABLE_W, boxHeight)
+          .fill('#f8f9fa')
+          .fillColor('#2d3748')
+          .text(highlighted, 65, yStart + 3, { width: USABLE_W - 10 })
+          .fillColor(COLOR_TEXT)
+          .restore()
+          .moveDown(1);
+      }
+
+      /* --- Math Blocks --- */
+      function addMath(tex, display = false) {
+        try {
+          const rendered = katex.renderToString(tex, { throwOnError: false, displayMode: display });
+          const stripped = rendered.replace(/<[^>]+>/g, '');
+          doc.save()
+            .font(FONT_MONO)
+            .fontSize(BASE_FONT_SIZE - 2)
+            .fillColor('#2b6cb0')
+            .text(stripped, { width: USABLE_W, align: display ? 'center' : 'left' })
+            .restore()
+            .moveDown(0.4);
+        } catch {
+          doc.text(`[Math: ${tex}]`).moveDown(0.4);
+        }
+      }
+
+      /* --- Parse content --- */
+      const lines = content.split('\n');
+      let inCode = false, codeLang = '', buf = [];
+      let listBuf = [], ordered = false;
+
+      for (const raw of lines) {
+        const line = raw.trimEnd();
+
+        if (line.startsWith('```')) {
+          if (inCode) {
+            addCodeBlock(buf.join('\n'), codeLang);
+            inCode = false; buf = [];
+          } else {
+            inCode = true; codeLang = line.slice(3).trim();
+          }
+          continue;
+        }
+        if (inCode) { buf.push(raw); continue; }
+
+        if (/^[-*]\s+/.test(line)) { listBuf.push(line.replace(/^[-*]\s+/, '')); ordered = false; continue; }
+        if (/^\d+\.\s+/.test(line)) { listBuf.push(line.replace(/^\d+\.\s+/, '')); ordered = true; continue; }
+        if (listBuf.length && !/^[-*\d]/.test(line)) { addList(listBuf, ordered); listBuf = []; }
+
+        if (line.startsWith('# ')) { addHeading(line, 1); continue; }
+        if (line.startsWith('## ')) { addHeading(line, 2); continue; }
+        if (line.startsWith('### ')) { addHeading(line, 3); continue; }
+
+        if (line.startsWith('$$') && line.endsWith('$$')) { addMath(line.slice(2, -2), true); continue; }
+
+        addParagraph(line);
+      }
+      if (listBuf.length) addList(listBuf, ordered);
+
+      /* --- Footer --- */
+      const total = doc.bufferedPageRange().count;
+      for (let i = 0; i < total; i++) {
+        doc.switchToPage(i);
+        const { width, height } = doc.page;
+        doc.fontSize(9).fillColor('#999');
+        doc.text('bookgenai.vercel.app', 60, 30, { width: width - 120, align: 'center' });
+        doc.text(`Page ${i + 1} of ${total}`, 60, height - 50, { width: width - 120, align: 'center' });
+        doc.fillColor(COLOR_TEXT);
       }
 
       doc.end();
@@ -690,6 +766,7 @@ async function generatePDF(title, sections, outputPath) {
     }
   });
 }
+
 
 function generatePrompts(bookTopic) {
   return [
