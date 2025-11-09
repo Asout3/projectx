@@ -592,15 +592,18 @@ function renderMathToPDF(doc, mathStr, yOffset = 15) {
 //   });
 // }
 
-
 async function generatePDF(content, outputPath) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 60, bufferPages: true, autoFirstPage: false });
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 60,
+        bufferPages: true,
+        autoFirstPage: false
+      });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      // Fonts
       const FONT_MAIN = 'Helvetica';
       const FONT_BOLD = 'Helvetica-Bold';
       const FONT_ITALIC = 'Helvetica-Oblique';
@@ -608,19 +611,28 @@ async function generatePDF(content, outputPath) {
       const BASE_FONT_SIZE = 13.5;
       const USABLE_W = doc.page.width - doc.options.margin * 2;
 
-      // Header/Footer
       doc.on('pageAdded', () => drawHeaderFooter());
 
-      function drawHeaderFooter() {
-        const pageIndex = doc.bufferedPageRange().count - 1;
-        doc.switchToPage(pageIndex);
+      function decodeEntities(str) {
+        if (!str) return '';
+        return str
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&amp;/g, '&');
+      }
 
-        // Header
+      function drawHeaderFooter() {
+        const i = doc.bufferedPageRange().count - 1;
+        doc.switchToPage(i);
+        const { width, height } = doc.page;
         doc.save();
         doc.font(FONT_MAIN).fontSize(9).fillColor('#999');
         doc.text('bookgenai.vercel.app', doc.options.margin, 30, {
-          width: USABLE_W,
+          width: width - doc.options.margin * 2,
           align: 'center',
+          lineBreak: false
         });
         doc.restore();
       }
@@ -630,223 +642,261 @@ async function generatePDF(content, outputPath) {
         const total = range.count;
         for (let i = 0; i < total; i++) {
           doc.switchToPage(i);
+          const { width, height } = doc.page;
           doc.font(FONT_MAIN).fontSize(9).fillColor('#999');
-          doc.text(`Page ${i + 1} of ${total}`, doc.options.margin, doc.page.height - 45, {
-            width: USABLE_W,
-            align: 'center',
+          doc.text(`Page ${i + 1} of ${total}`, doc.options.margin, height - 45, {
+            width: width - doc.options.margin * 2,
+            align: 'center'
           });
         }
       }
 
-      // Decode HTML entities
-      function decodeEntities(str) {
-        return str
-          ? str.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
-          : '';
-      }
-
-      // Inline formatting: bold, italic, code, links
       function renderInline(text) {
-        text = decodeEntities(text);
+        text = decodeEntities(text ?? '');
         const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-        let lastIndex = 0, m;
-
+        let lastIndex = 0;
+        let m;
         while ((m = linkRegex.exec(text)) !== null) {
           const before = text.slice(lastIndex, m.index);
-          if (before) pushText(before);
+          if (before) pushTextFragment(before, { continued: true });
           pushLink(m[1], m[2]);
           lastIndex = m.index + m[0].length;
         }
-
         const tail = text.slice(lastIndex);
-        if (tail) pushText(tail);
+        if (tail) pushTextFragment(tail);
       }
 
-      function pushText(txt) {
+      function pushTextFragment(t, opts = { continued: false }) {
         const regex = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`/g;
-        let last = 0, m;
-        while ((m = regex.exec(txt)) !== null) {
-          const before = txt.slice(last, m.index);
+        let last = 0;
+        let m;
+        while ((m = regex.exec(t)) !== null) {
+          const before = t.slice(last, m.index);
           if (before) doc.text(before, { continued: true, width: USABLE_W });
-
           if (m[2]) doc.font(FONT_BOLD).text(m[2], { continued: true, width: USABLE_W }).font(FONT_MAIN);
           else if (m[4]) doc.font(FONT_ITALIC).text(m[4], { continued: true, width: USABLE_W }).font(FONT_MAIN);
           else if (m[5]) doc.font(FONT_MONO).fontSize(BASE_FONT_SIZE - 1).text(m[5], { continued: true, width: USABLE_W }).font(FONT_MAIN).fontSize(BASE_FONT_SIZE);
-
           last = m.index + m[0].length;
         }
-        const rest = txt.slice(last);
-        if (rest) doc.text(rest, { continued: false, width: USABLE_W });
+        const rest = t.slice(last);
+        if (rest) doc.text(rest, { continued: opts.continued });
+        else if (!opts.continued) doc.text('', { continued: false });
       }
 
       function pushLink(text, url) {
-        doc.fillColor('#007acc').font(FONT_MAIN).fontSize(BASE_FONT_SIZE).text(text, { continued: true, underline: true, width: USABLE_W }).fillColor('#1a1a1a');
+        doc.fillColor('#007acc').font(FONT_MAIN).fontSize(BASE_FONT_SIZE)
+          .text(text ?? '', { continued: true, underline: true, width: USABLE_W })
+          .fillColor('#1a1a1a');
       }
 
       function addCodeBlock(codeStr, lang = 'plaintext') {
-        codeStr = decodeEntities(codeStr);
+        codeStr = decodeEntities(codeStr ?? '');
         const langName = hljs.getLanguage(lang) ? lang : 'plaintext';
         let highlighted;
-        try { highlighted = hljs.highlight(codeStr, { language: langName }).value.replace(/<\/?[^>]+(>|$)/g, ''); }
-        catch { highlighted = codeStr; }
-
+        try {
+          highlighted = hljs.highlight(codeStr, { language: langName }).value.replace(/<\/?[^>]+(>|$)/g, '');
+        } catch {
+          highlighted = codeStr;
+        }
         const boxPadding = 8;
         const textHeight = doc.heightOfString(highlighted, { width: USABLE_W - boxPadding * 2, font: FONT_MONO, size: BASE_FONT_SIZE - 1 });
         doc.save();
         doc.rect(doc.x - 4, doc.y, USABLE_W + 8, textHeight + boxPadding * 2).fill('#f8f9fa');
-        doc.fillColor('#2d3748').font(FONT_MONO).fontSize(BASE_FONT_SIZE - 1).text(highlighted, doc.x + boxPadding, doc.y + boxPadding, { width: USABLE_W - boxPadding * 2 });
-        doc.moveDown(1).fillColor('#1a1a1a').restore();
+        doc.fillColor('#2d3748').font(FONT_MONO).fontSize(BASE_FONT_SIZE - 1)
+          .text(highlighted, doc.x + boxPadding, doc.y + boxPadding, { width: USABLE_W - boxPadding * 2 });
+        doc.moveDown(1);
+        doc.fillColor('#1a1a1a').restore();
       }
 
       function addMath(tex, display = false) {
         try {
-          const html = katex.renderToString(tex, { throwOnError: false, displayMode: display });
+          const html = katex.renderToString(tex ?? '', { throwOnError: false, displayMode: display });
           const stripped = html.replace(/<[^>]+>/g, '');
           doc.font(FONT_MONO).fontSize(BASE_FONT_SIZE - 1).fillColor('#2b6cb0')
-             .text(stripped, { width: USABLE_W, align: display ? 'center' : 'left' })
-             .moveDown(0.4).fillColor('#1a1a1a');
+            .text(stripped, { width: USABLE_W, align: display ? 'center' : 'left' })
+            .moveDown(0.4)
+            .fillColor('#1a1a1a');
         } catch {
           doc.text(`[Math: ${tex}]`).moveDown(0.4);
         }
       }
 
       function drawTable(headers, rows) {
+        if (!headers || !headers.length) return;
+        headers = headers.map(h => (h ?? '').toString());
+        rows = rows.map(r => r.map(c => (c ?? '').toString()));
+
         const colCount = headers.length;
-        if (!colCount) return;
-        const marginX = doc.options.margin;
-        const startX = marginX;
+        const startX = doc.options.margin;
         const startY = doc.y;
-        let widths = headers.map((h, i) => {
+
+        const widths = headers.map((h, i) => {
           const headerW = doc.widthOfString(h, { width: USABLE_W });
-          const colMax = Math.max(headerW, ...rows.map(r => doc.widthOfString((r[i]||''), { width: USABLE_W })));
+          const colMax = Math.max(headerW, ...rows.map(r => doc.widthOfString(r[i] ?? '', { width: USABLE_W })));
           return Math.min(colMax + 10, USABLE_W / colCount * 3);
         });
-        const totalW = widths.reduce((a,b)=>a+b,0);
+        const totalW = widths.reduce((a, b) => a + b, 0);
         const scale = Math.min(1, USABLE_W / totalW);
-        widths = widths.map(w => w * scale);
+        for (let i = 0; i < widths.length; i++) widths[i] *= scale;
 
-        // header
-        doc.save().font(FONT_BOLD).fontSize(BASE_FONT_SIZE - 1).fillColor('#f8f9fa');
+        // header background
+        doc.save().font(FONT_BOLD).fontSize(BASE_FONT_SIZE - 1);
         let x = startX;
-        const headerH = Math.max(...headers.map((h,i)=>doc.heightOfString(h,{width:widths[i]}))) + 8;
-        doc.rect(x-4, startY, widths.reduce((a,b)=>a+b,0)+8, headerH).fill();
+        const headerH = Math.max(...headers.map((h, i) => doc.heightOfString(h, { width: widths[i] }))) + 8;
+        doc.fillColor('#f8f9fa');
+        doc.rect(x - 4, startY, widths.reduce((a, b) => a + b, 0) + 8, headerH).fill();
         doc.fillColor('#2c3e50');
-        headers.forEach((h,i)=>{ doc.text(h,x,startY+4,{width:widths[i],align:'left'}); x+=widths[i]; });
+        headers.forEach((h, i) => {
+          doc.text(h, x, startY + 4, { width: widths[i], align: 'left' });
+          x += widths[i];
+        });
         doc.moveDown(1);
 
         // rows
         doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE - 1).fillColor('#1a1a1a');
         rows.forEach(row => {
-          const rowH = Math.max(...row.map((c,i)=>doc.heightOfString(c||'', { width: widths[i] }))) + 6;
-          x = startX; const y = doc.y;
-          row.forEach((cell,i)=>{ doc.text(cell||'', x, y, { width: widths[i], align:'left' }); x += widths[i]; });
+          const rowH = Math.max(...row.map((c, i) => doc.heightOfString(c ?? '', { width: widths[i] }))) + 6;
+          x = startX;
+          const y = doc.y;
+          row.forEach((cell, i) => {
+            doc.text(cell ?? '', x, y, { width: widths[i], align: 'left' });
+            x += widths[i];
+          });
           doc.y = y + rowH;
         });
 
-        // borders
+        // grid lines
         doc.strokeColor('#cccccc').lineWidth(0.5);
         let lineX = startX - 4;
-        const top = startY - 2, bottom = doc.y + 2;
-        widths.forEach(w => { doc.moveTo(lineX, top).lineTo(lineX, bottom).stroke(); lineX += w; });
-        doc.moveTo(startX-4, top).lineTo(startX-4 + widths.reduce((a,b)=>a+b,0), top).stroke();
-        doc.moveTo(startX-4, bottom).lineTo(startX-4 + widths.reduce((a,b)=>a+b,0), bottom).stroke();
+        const top = startY - 2;
+        const bottom = doc.y + 2;
+        widths.forEach(w => {
+          doc.moveTo(lineX, top).lineTo(lineX, bottom).stroke();
+          lineX += w;
+        });
+        doc.moveTo(startX - 4 + widths.reduce((a, b) => a + b, 0), top).lineTo(startX - 4 + widths.reduce((a, b) => a + b, 0), bottom).stroke();
+        doc.moveTo(startX - 4, top).lineTo(startX - 4 + widths.reduce((a, b) => a + b, 0), top).stroke();
+        doc.moveTo(startX - 4, bottom).lineTo(startX - 4 + widths.reduce((a, b) => a + b, 0), bottom).stroke();
         doc.moveDown(0.6);
       }
 
-      // Main parser
+      // --- Parse content ---
       const lines = content.split('\n');
-      let inCode = false, codeLang = '', codeBuf = [], tableBuf = [], listStack = [];
+      let inCode = false, codeLang = '', codeBuf = [];
+      let tableBuf = [];
+      let listStack = [];
 
-      function flushListStack(indent = 0) {
-        while(listStack.length && listStack[listStack.length-1].indent >= indent){
-          const block = listStack.pop();
-          const indentPx = 12 * (listStack.length +1);
-          block.items.forEach((it, idx)=>{
-            const num = block.ordered ? `${idx+1}. ` : '• ';
-            doc.text(num, doc.x+indentPx-6, doc.y, {continued:true});
-            renderInline(it.trim());
-            doc.moveDown(0.3);
-          });
-          doc.moveDown(0.4);
+      function flushListStack(currentIndent = 0) {
+        while (listStack.length && listStack[listStack.length - 1].indent >= currentIndent) {
+          const item = listStack.pop();
+          renderListBlock(item, item.ordered);
         }
       }
 
-      for(let raw of lines){
-        const line = raw.replace(/\r/g,'');
-
-        // code fence
-        if(line.trim().startsWith('```')){
-          if(inCode){ addCodeBlock(codeBuf.join('\n'), codeLang); codeBuf=[]; inCode=false; codeLang=''; continue; }
-          else{ inCode=true; codeLang=line.trim().slice(3).trim(); continue; }
-        }
-        if(inCode){ codeBuf.push(decodeEntities(line)); continue; }
-
-        // table
-        if((line.match(/\|/g)||[]).length>=2){ tableBuf.push(line); continue; }
-        else if(tableBuf.length){
-          const headerLine = tableBuf[0];
-          const sepLine = tableBuf[1] && /^ *\|? *-+/.test(tableBuf[1]);
-          const headers = headerLine.split('|').slice(1,-1).map(s=>decodeEntities(s.trim()));
-          const rows = tableBuf.slice(sepLine?2:1).map(r=>r.split('|').slice(1,-1).map(c=>decodeEntities(c.trim())));
-          drawTable(headers, rows);
-          tableBuf=[];
-        }
-
-        // blockquote
-        if(/^\s*>/.test(line)){
-          const inner = line.replace(/^\s*>\s?/,'');
-          doc.save(); doc.moveDown(0.3);
-          const startY = doc.y;
-          const h = doc.heightOfString(inner,{width:USABLE_W-20}) +12;
-          doc.rect(doc.x-6,startY,USABLE_W+12,h).fill('#f8f9fa');
-          doc.fillColor('#2c3e50').font(FONT_ITALIC).fontSize(BASE_FONT_SIZE).text(inner,{width:USABLE_W-20,indent:10});
-          doc.moveDown(0.6); doc.fillColor('#1a1a1a').restore(); continue;
-        }
-
-        // headings
-        const headingMatch = line.match(/^(#{1,6})\s*(.*)$/);
-        if(headingMatch){
-          const level = headingMatch[1].length;
-          const text = headingMatch[2].trim();
-          if(level===1) doc.addPage();
-          const sizes = {1:24,2:20,3:16,4:14,5:13,6:12};
-          const fsize = sizes[level]||13;
-          doc.moveDown(level===1?1.2:0.8);
-          doc.font(FONT_BOLD).fontSize(fsize).fillColor('#2c3e50').text(text,{width:USABLE_W,align:level===1?'center':'left'});
-          doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE).fillColor('#1a1a1a');
-          doc.moveDown(0.4); continue;
-        }
-
-        // lists
-        const listMatch = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
-        if(listMatch){
-          const indent = listMatch[1].replace(/\t/g,'    ').length;
-          const marker = listMatch[2]; const text = listMatch[3];
-          const ordered = /^\d+\.$/.test(marker);
-          if(!listStack.length || indent>listStack[listStack.length-1].indent) listStack.push({indent, ordered, items:[text]});
-          else { flushListStack(indent); listStack.push({indent, ordered, items:[text]}); }
-          continue;
-        } else flushListStack();
-
-        // math $$...$$
-        const mathMatch = line.match(/^\$\$(.*)\$\$$/);
-        if(mathMatch){ addMath(mathMatch[1].trim(),true); continue; }
-
-        // paragraph
-        if(!line.trim()){ doc.moveDown(0.6); continue; }
-        renderInline(line);
+      function renderListBlock(block, ordered) {
+        const indentPx = 12 * (listStack.length + 1);
+        block.items.forEach((it, idx) => {
+          const num = ordered ? `${idx + 1}. ` : '• ';
+          doc.text(num, doc.x + indentPx - 6, doc.y, { continued: true });
+          renderInline(it.trim());
+          doc.moveDown(0.3);
+        });
         doc.moveDown(0.4);
       }
 
-      // flush leftovers
-      if(tableBuf.length){ const headers=tableBuf[0].split('|').slice(1,-1).map(s=>decodeEntities(s.trim())); const rows=tableBuf.slice(2).map(r=>r.split('|').slice(1,-1).map(c=>decodeEntities(c.trim()))); drawTable(headers, rows);}
+      for (let raw of lines) {
+        const line = raw.replace(/\r/g, '');
+
+        if (line.trim().startsWith('```')) {
+          if (inCode) {
+            addCodeBlock(codeBuf.join('\n'), codeLang || 'plaintext');
+            codeBuf = []; inCode = false; codeLang = '';
+          } else {
+            inCode = true;
+            codeLang = (line.trim().slice(3) || '').trim();
+          }
+          continue;
+        }
+        if (inCode) { codeBuf.push(decodeEntities(line)); continue; }
+
+        if ((line.match(/\|/g) || []).length >= 2) {
+          tableBuf.push(line);
+          continue;
+        } else if (tableBuf.length) {
+          const headerLine = tableBuf[0];
+          const sepLine = tableBuf[1] && /^ *\|? *-+/.test(tableBuf[1]);
+          const headers = headerLine.split('|').slice(1, -1).map(s => decodeEntities(s.trim()));
+          const rows = tableBuf.slice(sepLine ? 2 : 1).map(r => r.split('|').slice(1, -1).map(c => decodeEntities(c.trim())));
+          drawTable(headers, rows);
+          tableBuf = [];
+        }
+
+        if (/^\s*>/.test(line)) {
+          const inner = decodeEntities(line.replace(/^\s*>\s?/, ''));
+          const startY = doc.y;
+          const h = doc.heightOfString(inner, { width: USABLE_W - 20 }) + 12;
+          doc.rect(doc.x - 6, startY - 2, USABLE_W + 12, h).fill('#f8f9fa');
+          doc.fillColor('#2c3e50').font(FONT_ITALIC).fontSize(BASE_FONT_SIZE)
+            .text(inner, { width: USABLE_W - 20, indent: 10 });
+          doc.moveDown(0.6);
+          doc.fillColor('#1a1a1a').restore();
+          continue;
+        }
+
+        const headingMatch = line.match(/^(#{1,6})\s*(.*)$/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          const text = decodeEntities(headingMatch[2].trim());
+          if (level === 1) doc.addPage();
+          const sizes = { 1: 24, 2: 20, 3: 16, 4: 14, 5: 13, 6: 12 };
+          const fsize = sizes[level] || 13;
+          doc.moveDown(level === 1 ? 1.2 : 0.8);
+          doc.font(FONT_BOLD).fontSize(fsize).fillColor('#2c3e50')
+            .text(text, { width: USABLE_W, align: level === 1 ? 'center' : 'left' });
+          doc.font(FONT_MAIN).fontSize(BASE_FONT_SIZE).fillColor('#1a1a1a');
+          doc.moveDown(0.4);
+          continue;
+        }
+
+        const listMatch = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+        if (listMatch) {
+          const indent = listMatch[1].replace(/\t/g,'    ').length;
+          const ordered = /^\d+\.$/.test(listMatch[2]);
+          const text = decodeEntities(listMatch[3]);
+          if (!listStack.length || indent > listStack[listStack.length - 1].indent) {
+            listStack.push({ indent, ordered, items: [text] });
+          } else {
+            flushListStack(indent);
+            listStack.push({ indent, ordered, items: [text] });
+          }
+          continue;
+        } else flushListStack();
+
+        const mathMatch = line.match(/^\$\$(.*)\$\$$/);
+        if (mathMatch) { addMath(mathMatch[1].trim(), true); continue; }
+
+        if (!line.trim()) { doc.moveDown(0.6); continue; }
+
+        renderInline(decodeEntities(line));
+        doc.moveDown(0.4);
+      }
+
+      if (tableBuf.length) {
+        const headerLine = tableBuf[0];
+        const sepLine = tableBuf[1] && /^ *\|? *-+/.test(tableBuf[1]);
+        const headers = headerLine.split('|').slice(1, -1).map(s => decodeEntities(s.trim()));
+        const rows = tableBuf.slice(sepLine ? 2 : 1).map(r => r.split('|').slice(1, -1).map(c => decodeEntities(c.trim())));
+        drawTable(headers, rows);
+      }
       flushListStack();
 
-      // footer page numbers
       drawFooter();
       doc.end();
-      stream.on('finish',()=>resolve(outputPath));
-    } catch(err){ reject(err); }
+
+      stream.on('finish', () => resolve(outputPath));
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
