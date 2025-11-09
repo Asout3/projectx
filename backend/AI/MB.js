@@ -1,13 +1,13 @@
 import { Together } from "together-ai";
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import pdfshift from 'pdfshift';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
+import fetch from 'node-fetch';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -195,12 +195,10 @@ function cleanUpAIText(text) {
     .trim();
 }
 
-// === PDFShift PDF Generation ===
+// === PDFShift Direct API Generation ===
 async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
-
-  pdfshift.setApiKey(process.env.PDFSHIFT_API_KEY || 'sk_00c7b14f58bd014b353826f34d96534a5d1fccec');
 
   const html = `
   <!DOCTYPE html>
@@ -224,7 +222,7 @@ async function generatePDF(content, outputPath) {
         src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
       </script>
       
-      <!-- Prism.js (trailing spaces removed) -->
+      <!-- Prism.js -->
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
@@ -285,21 +283,38 @@ async function generatePDF(content, outputPath) {
   `;
 
   try {
-    const pdfBuffer = await pdfshift.convert(html, {
-      format: 'A4',
-      margin: {
-        top: '80px',
-        bottom: '80px',
-        left: '60px',
-        right: '60px'
+    const apiKey = process.env.PDFSHIFT_API_KEY || 'sk_00c7b14f58bd014b353826f34d96534a5d1fccec';
+    
+    const response = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+      method: 'POST',
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': 'application/json'
       },
-      printBackground: true,
-      headerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
-      footerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>`,
-      waitForNetworkIdle: true,
-      timeout: 60000 // 60 seconds
+      body: JSON.stringify({
+        source: html,
+        sandbox: true, // Enable sandbox mode for rendering external scripts
+        format: 'A4',
+        margin: {
+          top: '80px',
+          bottom: '80px',
+          left: '60px',
+          right: '60px'
+        },
+        printBackground: true,
+        headerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
+        footerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>`,
+        waitForNetworkIdle: true,
+        timeout: 60000 // 60 seconds
+      })
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PDFShift API error: ${response.status} - ${errorText}`);
+    }
+
+    const pdfBuffer = await response.buffer();
     fs.writeFileSync(outputPath, pdfBuffer);
     logger.info(`Generated PDF: ${outputPath}`);
     return outputPath;
@@ -415,8 +430,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
