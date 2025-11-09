@@ -596,12 +596,7 @@ async function generatePDF(content, outputPath) {
   return new Promise((resolve, reject) => {
     try {
       if (!outputPath) throw new Error("outputPath is undefined");
-
-      const PDFDocument = require('pdfkit');
-      const fs = require('fs');
-      const hljs = require('highlight.js');
-      const katex = require('katex');
-
+      
       const doc = new PDFDocument({
         size: 'A4',
         margin: 60,
