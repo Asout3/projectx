@@ -293,7 +293,7 @@ async function generatePDF(content, outputPath) {
       },
       body: JSON.stringify({
         source: html,
-        sandbox: true, // Enable sandbox mode for rendering external scripts
+        sandbox: true,
         format: 'A4',
         margin: {
           top: '80px',
@@ -301,11 +301,17 @@ async function generatePDF(content, outputPath) {
           left: '60px',
           right: '60px'
         },
-        printBackground: true,
-        headerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
-        footerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>`,
-        waitForNetworkIdle: true,
-        timeout: 60000 // 60 seconds
+        background: true, // Correct field name
+        header: { // Correct object structure
+          source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
+          spacing: '5mm'
+        },
+        footer: { // Correct object structure
+          source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page {{page}} of {{pages}}</div>`,
+          spacing: '5mm'
+        },
+        wait_for_network_idle: true, // Correct field name
+        timeout: 60000
       })
     });
 
