@@ -195,7 +195,6 @@ function cleanUpAIText(text) {
     .trim();
 }
 
-// === PDFShift Direct API Generation ===
 async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -301,17 +300,16 @@ async function generatePDF(content, outputPath) {
           left: '60px',
           right: '60px'
         },
-        background: true, // Correct field name
-        header: { // Correct object structure
+        // Only use officially supported fields
+        header: {
           source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
           spacing: '5mm'
         },
-        footer: { // Correct object structure
+        footer: {
           source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page {{page}} of {{pages}}</div>`,
           spacing: '5mm'
         },
-        wait_for_network_idle: true, // Correct field name
-        timeout: 60000
+        delay: 2000 // Wait 2 seconds for external scripts to load
       })
     });
 
