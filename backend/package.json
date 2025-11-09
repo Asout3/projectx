@@ -26,7 +26,7 @@
     "svg2pdf.js": "^2.2.1",
     "katex": "^0.16.9",
     "pdfkit-table": "^0.1.99",
-    "pdfshift": "^1.1.1",
+    "pdfshift": "latest",
     "winston": "^3.17.0"
   }
 }
