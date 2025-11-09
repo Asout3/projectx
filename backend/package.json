@@ -27,6 +27,7 @@
     "katex": "^0.16.9",
     "pdfkit-table": "^0.1.99",
     "pdfshift": "latest",
+    "node-fetch": "latest",
     "winston": "^3.17.0"
   }
 }
