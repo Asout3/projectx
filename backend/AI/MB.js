@@ -105,11 +105,9 @@ function cleanUpAIText(text) {
   text = text.replace(/\n\s*$/g, "");
   text = text.replace(/[\u2013\u2014]/g, "-");
   
-  // Flag hallucinated citations
   text = text.replace(/According to (?:a |an )?\d{4} (?:study|paper|research)/gi, '[CITATION NEEDED]');
   text = text.replace(/https?:\/\/[^\s]+/g, '[URL NEEDED]');
   
-  // Remove repetitive analogies
   const analogyCount = (text.match(/robot (chef|assistant|librarian)/gi) || []).length;
   if (analogyCount > 2) {
     text = text.replace(/robot (chef|assistant|librarian)/gi, '[REMOVED: Repetitive analogy]');
@@ -179,39 +177,49 @@ async function askAI(prompt, userId, bookTopic) {
   }
 }
 
-// === OUTLINE GENERATION ===
+// === OUTLINE GENERATION (with retry) ===
 async function generateOutline(bookTopic, userId) {
-  const outlinePrompt = `Generate a detailed 10-chapter outline for a technical field guide about "${bookTopic}" (undergrad STEM level). 
+  const outlinePrompt = `You are a JSON generator. Create a 10-chapter outline for "${bookTopic}" (undergrad STEM level). 
+CRITICAL: Output ONLY valid JSON array with this exact structure:
+[{"chapter":1,"title":"Introduction to X","subtopics":["What is X","Why it matters","Key terms"]},...]
 Requirements:
-- Each chapter: title + exactly 3 specific subtopics
-- No analogies, no fluff
-- Output as JSON array: [{"chapter": 1, "title": "...", "subtopics": ["...", "...", "..."]}, ...]`;
+- 10 chapters exactly
+- Each: chapter (number), title (string), subtopics (array of 3 strings)
+- No markdown fences, no explanations`;
 
-  const messages = [
-    { role: 'system', content: 'You are a technical editor. Respond only with valid JSON.' },
-    { role: 'user', content: outlinePrompt }
-  ];
+  let retryCount = 0;
+  const maxRetries = 2;
 
-  const rawResponse = await askAI(outlinePrompt, userId, bookTopic);
-  
-  try {
-    const jsonString = rawResponse.replace(/```json\n?|\n?```/g, '').trim();
-    return JSON.parse(jsonString);
-  } catch (e) {
-    logger.error(`Outline parse failed: ${e.message}`);
-    return Array.from({ length: 10 }, (_, i) => ({
-      chapter: i + 1,
-      title: `Chapter ${i + 1}: ${bookTopic} - Aspect ${i + 1}`,
-      subtopics: ['Introduction', 'Key Concepts', 'Applications']
-    }));
+  while (retryCount < maxRetries) {
+    try {
+      const rawResponse = await askAI(outlinePrompt, userId, bookTopic);
+      const jsonString = rawResponse.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(jsonString);
+      
+      if (Array.isArray(parsed) && parsed.length === 10 && 
+          parsed.every(ch => ch.chapter && ch.title && Array.isArray(ch.subtopics) && ch.subtopics.length >= 2)) {
+        return parsed;
+      }
+      throw new Error('Invalid outline structure');
+    } catch (e) {
+      retryCount++;
+      logger.warn(`Outline attempt ${retryCount} failed: ${e.message}`);
+      if (retryCount >= maxRetries) break;
+    }
   }
+
+  logger.error('All outline attempts failed, using fallback');
+  return Array.from({ length: 10 }, (_, i) => ({
+    chapter: i + 1,
+    title: `Introduction to ${bookTopic}`,
+    subtopics: ['Fundamentals', 'Key Principles', 'Real-World Applications']
+  }));
 }
 
-// === TABLE OF CONTENTS GENERATOR (FIXED) ===
+// === TABLE OF CONTENTS GENERATOR (with validation) ===
 function generateTableOfContents(outline, bookTopic) {
-  // Validate outline structure
   if (!Array.isArray(outline)) {
-    logger.error('Outline is not an array');
+    logger.error('Outline is not an array, using fallback');
     outline = [];
   }
 
@@ -224,17 +232,12 @@ function generateTableOfContents(outline, bookTopic) {
   );
 
   if (validChapters.length === 0) {
-    logger.warn('No valid chapters found, using fallback');
-    // Generate fallback TOC
+    // Emergency fallback
     validChapters.push(...Array.from({ length: 10 }, (_, i) => ({
       chapter: i + 1,
-      title: `Chapter ${i + 1}: ${bookTopic}`,
-      subtopics: ['Introduction', 'Key Concepts', 'Applications']
+      title: `Chapter ${i + 1}`,
+      subtopics: ['Introduction', 'Concepts', 'Applications']
     })));
-  }
-
-  if (validChapters.length < outline.length) {
-    logger.warn(`Filtered out ${outline.length - validChapters.length} invalid chapters`);
   }
 
   const tocLines = [
@@ -250,103 +253,34 @@ function generateTableOfContents(outline, bookTopic) {
   return tocLines.join('\n');
 }
 
-// === CHAPTER GENERATION ===
-async function generateChapter(prompt, chapterNum, userId, bookTopic) {
+// === CHAPTER GENERATION (enforces title) ===
+async function generateChapter(prompt, chapterNum, userId, bookTopic, correctTitle) {
   const history = userHistories.get(userId) || [];
   const toc = history.find(msg => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents'));
 
   const modifiedPrompt = toc ? `${prompt}\n\nRefer to this outline:\n${toc.content}` : prompt;
   
   const rawText = await askAI(modifiedPrompt, userId, bookTopic);
-  const cleanedText = cleanUpAIText(rawText);
+  let cleanedText = cleanUpAIText(rawText);
+  
+  // === ENFORCE CORRECT TITLE ===
+  const titleLine = `## Chapter ${chapterNum}: ${correctTitle}`;
+  const titleRegex = /^## Chapter \d+: .*$/m;
+  
+  if (titleRegex.test(cleanedText)) {
+    // Replace existing title
+    cleanedText = cleanedText.replace(titleRegex, titleLine);
+  } else {
+    // Prepend title
+    cleanedText = `${titleLine}\n\n${cleanedText}`;
+  }
   
   const filename = path.join(CONFIG.OUTPUT_DIR, `${CONFIG.CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
   saveToFile(filename, cleanedText);
   return filename;
 }
 
-// === PDF GENERATION ===
-async function generatePDF(content, outputPath) {
-  const cleaned = cleanUpAIText(content);
-  const formattedContent = formatMath(cleaned);
-  const titleMatch = cleaned.match(/^#\s+(.+)$/m);
-  const bookTitle = titleMatch ? titleMatch[1] : 'AI Generated Book';
-
-  const html = `
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8">
-      <title>${bookTitle}</title>
-      <style>
-        @page { margin: 90px 70px 80px 70px; size: A4; }
-        body { font-family: Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; text-align: justify; hyphens: auto; }
-        .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
-        .cover-title { font-size: 48px; font-weight: 700; margin-bottom: 0.3em; }
-        .cover-meta { position: absolute; bottom: 60px; font-size: 14px; opacity: 0.8; }
-        h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; page-break-before: always; }
-        h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; }
-        code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: monospace; font-size: 13px; }
-        pre { background: #1f2937; color: #e5e7eb; padding: 20px; border-radius: 8px; overflow-x: auto; margin: 1.5em 0; }
-        blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: #f3f4f6; font-style: italic; }
-        .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
-      </style>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-      <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    </head>
-    <body>
-      <div class="cover-page">
-        <h1 class="cover-title">${bookTitle}</h1>
-        <div class="cover-meta">
-          Generated by Bookgen.ai<br>
-          ${new Date().toLocaleDateString()}
-        </div>
-      </div>
-      ${marked.parse(formattedContent)}
-      <div class="disclaimer-footer">
-        AI-generated content. Verify independently.
-      </div>
-    </body>
-  </html>
-  `;
-
-  try {
-    const formData = new FormData();
-    formData.append('instructions', JSON.stringify({
-      parts: [{ html: "index.html" }],
-      output: {
-        format: "pdf",
-        pdf: {
-          margin: { top: "90px", bottom: "80px", left: "70px", right: "70px" },
-          header: { content: '<div style="font-size: 10px; text-align: center; color: #6b7280;">bookgen.ai</div>', spacing: "5mm" },
-          footer: { content: '<div style="font-size: 10px; text-align: center; color: #6b7280;">Page {pageNumber}</div>', spacing: "5mm" },
-          waitDelay: 3000,
-          printBackground: true,
-        }
-      }
-    }));
-    formData.append('index.html', Buffer.from(html), { filename: 'index.html', contentType: 'text/html' });
-
-    const response = await fetch('https://api.nutrient.io/build', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${CONFIG.PDF_API_KEY}` },
-      body: formData
-    });
-
-    if (!response.ok) throw new Error(`PDF API error: ${response.status}`);
-    
-    const pdfBuffer = await response.buffer();
-    fs.writeFileSync(outputPath, pdfBuffer);
-    logger.info(`✅ PDF generated: ${outputPath}`);
-    return outputPath;
-
-  } catch (error) {
-    logger.error(`PDF generation failed: ${error.message}`);
-    throw error;
-  }
-}
-
-// === MASTER FUNCTION (FIXED WITH VALIDATION) ===
+// === MASTER FUNCTION (enforces title matching) ===
 export async function generateBookMedd(bookTopic, userId) {
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   logger.info(`Starting book generation for ${safeUserId}`);
@@ -355,17 +289,17 @@ export async function generateBookMedd(bookTopic, userId) {
   try {
     global.cancelFlags = global.cancelFlags || {};
 
-    // Step 1: Generate outline with extra safety
+    // Step 1: Generate outline
     logger.info('Step 1: Generating outline...');
     let outline = await generateOutline(bookTopic, safeUserId);
     
-    // Double-check outline is valid
+    // Validate outline
     if (!Array.isArray(outline) || outline.length === 0) {
-      logger.warn('Outline generation failed, using fallback structure');
+      logger.warn('Outline invalid, using fallback');
       outline = Array.from({ length: 10 }, (_, i) => ({
         chapter: i + 1,
-        title: `${bookTopic} - Part ${i + 1}`,
-        subtopics: ['Overview', 'Key Principles', 'Practical Applications']
+        title: `Introduction to ${bookTopic}`,
+        subtopics: ['Overview', 'Key Concepts', 'Applications']
       }));
     }
 
@@ -376,12 +310,12 @@ export async function generateBookMedd(bookTopic, userId) {
     saveToFile(tocFile, tocMarkdown);
     chapterFiles.push(tocFile);
 
-    // Step 3: Prepare chapter prompts
+    // Step 3: Generate prompts with correct titles
     const prompts = outline.map(ch => 
       `Write Chapter ${ch.chapter}: "${ch.title}". Subtopics: ${ch.subtopics?.join?.(', ') || 'General discussion'}. 400 words, technical tone, no analogies.`
     );
 
-    // Step 4: Generate chapters
+    // Step 4: Generate chapters WITH title enforcement
     for (let i = 0; i < outline.length; i++) {
       if (global.cancelFlags?.[userId]) {
         delete global.cancelFlags[userId];
@@ -389,7 +323,7 @@ export async function generateBookMedd(bookTopic, userId) {
       }
 
       logger.info(`Step 4.${i+1}: Generating Chapter ${i+1}...`);
-      const file = await generateChapter(prompts[i], i + 1, safeUserId, bookTopic);
+      const file = await generateChapter(prompts[i], i + 1, safeUserId, bookTopic, outline[i].title);
       chapterFiles.push(file);
     }
 
@@ -410,13 +344,13 @@ export async function generateBookMedd(bookTopic, userId) {
     logger.error(`Book generation failed: ${error.message}`);
     throw error;
   } finally {
-    // Always cleanup
+    // Cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
   }
 }
 
-// === QUEUE WRAPPER (signature unchanged) ===
+// === QUEUE WRAPPER ===
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const result = await generateBookMedd(task.bookTopic, task.userId);
@@ -434,7 +368,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
