@@ -207,14 +207,46 @@ Requirements:
   }
 }
 
-// === TABLE OF CONTENTS GENERATOR (NEW) ===
+// === TABLE OF CONTENTS GENERATOR (FIXED) ===
 function generateTableOfContents(outline, bookTopic) {
+  // Validate outline structure
+  if (!Array.isArray(outline)) {
+    logger.error('Outline is not an array');
+    outline = [];
+  }
+
+  const validChapters = outline.filter(ch => 
+    ch && 
+    typeof ch.chapter === 'number' && 
+    typeof ch.title === 'string' && 
+    Array.isArray(ch.subtopics) && 
+    ch.subtopics.length > 0
+  );
+
+  if (validChapters.length === 0) {
+    logger.warn('No valid chapters found, using fallback');
+    // Generate fallback TOC
+    validChapters.push(...Array.from({ length: 10 }, (_, i) => ({
+      chapter: i + 1,
+      title: `Chapter ${i + 1}: ${bookTopic}`,
+      subtopics: ['Introduction', 'Key Concepts', 'Applications']
+    })));
+  }
+
+  if (validChapters.length < outline.length) {
+    logger.warn(`Filtered out ${outline.length - validChapters.length} invalid chapters`);
+  }
+
   const tocLines = [
     `# ${bookTopic}`,
     `## Table of Contents\n`,
-    ...outline.map(ch => `${ch.chapter}. **${ch.title}**\n   - ${ch.subtopics.join('\n   - ')}`),
+    ...validChapters.map(ch => {
+      const subtopicList = ch.subtopics.filter(st => typeof st === 'string').join('\n   - ');
+      return `${ch.chapter}. **${ch.title}**\n   - ${subtopicList}`;
+    }),
     `\n---\n`
   ];
+  
   return tocLines.join('\n');
 }
 
@@ -314,7 +346,7 @@ async function generatePDF(content, outputPath) {
   }
 }
 
-// === MASTER FUNCTION (signature unchanged) ===
+// === MASTER FUNCTION (FIXED WITH VALIDATION) ===
 export async function generateBookMedd(bookTopic, userId) {
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   logger.info(`Starting book generation for ${safeUserId}`);
@@ -323,20 +355,30 @@ export async function generateBookMedd(bookTopic, userId) {
   try {
     global.cancelFlags = global.cancelFlags || {};
 
-    // Step 1: Generate outline
+    // Step 1: Generate outline with extra safety
     logger.info('Step 1: Generating outline...');
-    const outline = await generateOutline(bookTopic, safeUserId);
+    let outline = await generateOutline(bookTopic, safeUserId);
     
-    // Step 2: Generate formatted TOC page
+    // Double-check outline is valid
+    if (!Array.isArray(outline) || outline.length === 0) {
+      logger.warn('Outline generation failed, using fallback structure');
+      outline = Array.from({ length: 10 }, (_, i) => ({
+        chapter: i + 1,
+        title: `${bookTopic} - Part ${i + 1}`,
+        subtopics: ['Overview', 'Key Principles', 'Practical Applications']
+      }));
+    }
+
+    // Step 2: Generate TOC page
     logger.info('Step 2: Generating Table of Contents page...');
     const tocMarkdown = generateTableOfContents(outline, bookTopic);
     const tocFile = path.join(CONFIG.OUTPUT_DIR, `${CONFIG.CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
     saveToFile(tocFile, tocMarkdown);
-    chapterFiles.push(tocFile); // TOC appears first in PDF
+    chapterFiles.push(tocFile);
 
-    // Step 3: Generate chapter prompts from outline
+    // Step 3: Prepare chapter prompts
     const prompts = outline.map(ch => 
-      `Write Chapter ${ch.chapter}: "${ch.title}". Subtopics: ${ch.subtopics.join(', ')}. 400 words, technical tone, no analogies.`
+      `Write Chapter ${ch.chapter}: "${ch.title}". Subtopics: ${ch.subtopics?.join?.(', ') || 'General discussion'}. 400 words, technical tone, no analogies.`
     );
 
     // Step 4: Generate chapters
