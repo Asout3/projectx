@@ -42,7 +42,7 @@ const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
 
 // Rate Limiter: 6 seconds between requests = 10 RPM (safe under free tier)
 const limiter = new Bottleneck({
-  minTime: 6000,
+  minTime: 6800,
   maxConcurrent: 1
 });
 
@@ -637,7 +637,7 @@ const bookQueue = async.queue(async (task, callback) => {
   } catch (error) {
     callback(error);
   }
-}, 1);
+}, 3);
 
 // === Master Function ===
 export async function generateBookMedd(bookTopic, userId) {
