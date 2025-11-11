@@ -13,7 +13,7 @@ import FormData from 'form-data';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// === CENTRALIZED CONFIG (kept at top for easy tweaking) ===
+// === CENTRALIZED CONFIG ===
 const CONFIG = {
   HISTORY_DIR: path.join(__dirname, 'history'),
   OUTPUT_DIR: path.join(__dirname, '../pdfs'),
@@ -57,7 +57,7 @@ marked.setOptions({
 // === STATE MANAGEMENT ===
 const userHistories = new Map();
 
-// === UTILITY FUNCTIONS (unchanged signatures) ===
+// === UTILITY FUNCTIONS ===
 function getHistoryFile(userId) {
   return path.join(CONFIG.HISTORY_DIR, `history-${userId}.json`);
 }
@@ -72,13 +72,11 @@ function loadConversationHistory(userId) {
 }
 
 function saveConversationHistory(userId, history) {
-  // Keep only last 2 messages to prevent context overflow
   const trimmed = history.slice(-2);
   fs.writeFileSync(getHistoryFile(userId), JSON.stringify(trimmed, null, 2));
 }
 
 function trimHistory(messages) {
-  // Even more aggressive trimming for free-tier limits
   return messages.slice(-1);
 }
 
@@ -97,26 +95,24 @@ function deleteFile(filePath) {
 }
 
 function combineChapters(files) {
-  // In-memory combination for speed
   return files.map(file => fs.readFileSync(file, 'utf8')).join('\n\n\n');
 }
 
-// === POST-PROCESSING IMPROVEMENTS ===
+// === POST-PROCESSING ===
 function cleanUpAIText(text) {
   text = text.replace(/^(?:[-=_~\s]{5,})$/gm, "");
   text = text.replace(/\n{3,}/g, "\n\n");
   text = text.replace(/\n\s*$/g, "");
   text = text.replace(/[\u2013\u2014]/g, "-");
   
-  // === NEW: Hallucination flagging ===
+  // Flag hallucinated citations
   text = text.replace(/According to (?:a |an )?\d{4} (?:study|paper|research)/gi, '[CITATION NEEDED]');
   text = text.replace(/https?:\/\/[^\s]+/g, '[URL NEEDED]');
   
-  // === NEW: Analogy deduplication ===
+  // Remove repetitive analogies
   const analogyCount = (text.match(/robot (chef|assistant|librarian)/gi) || []).length;
   if (analogyCount > 2) {
     text = text.replace(/robot (chef|assistant|librarian)/gi, '[REMOVED: Repetitive analogy]');
-    logger.warn('Removed repetitive analogies from text');
   }
   
   return text.trim();
@@ -139,7 +135,7 @@ function formatMath(content) {
   return content;
 }
 
-// === AI CALLS (signature unchanged) ===
+// === AI CALLS ===
 async function askAI(prompt, userId, bookTopic) {
   const history = userHistories.get(userId) || [];
   const trimmedHistory = trimHistory(history);
@@ -161,7 +157,6 @@ async function askAI(prompt, userId, bookTopic) {
       .replace(/^I'm DeepSeek-R1.*?help you\.\s*/i, '')
       .trim();
 
-    // Basic relevance check
     const topicWords = bookTopic.toLowerCase().split(/\s+/).filter(w => w.length > 3);
     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
     
@@ -184,7 +179,7 @@ async function askAI(prompt, userId, bookTopic) {
   }
 }
 
-// === OUTLINE GENERATION (NEW, internal) ===
+// === OUTLINE GENERATION ===
 async function generateOutline(bookTopic, userId) {
   const outlinePrompt = `Generate a detailed 10-chapter outline for a technical field guide about "${bookTopic}" (undergrad STEM level). 
 Requirements:
@@ -200,12 +195,10 @@ Requirements:
   const rawResponse = await askAI(outlinePrompt, userId, bookTopic);
   
   try {
-    // Clean markdown fences
     const jsonString = rawResponse.replace(/```json\n?|\n?```/g, '').trim();
     return JSON.parse(jsonString);
   } catch (e) {
     logger.error(`Outline parse failed: ${e.message}`);
-    // Fallback to generic structure
     return Array.from({ length: 10 }, (_, i) => ({
       chapter: i + 1,
       title: `Chapter ${i + 1}: ${bookTopic} - Aspect ${i + 1}`,
@@ -214,7 +207,18 @@ Requirements:
   }
 }
 
-// === CHAPTER GENERATION (signature unchanged) ===
+// === TABLE OF CONTENTS GENERATOR (NEW) ===
+function generateTableOfContents(outline, bookTopic) {
+  const tocLines = [
+    `# ${bookTopic}`,
+    `## Table of Contents\n`,
+    ...outline.map(ch => `${ch.chapter}. **${ch.title}**\n   - ${ch.subtopics.join('\n   - ')}`),
+    `\n---\n`
+  ];
+  return tocLines.join('\n');
+}
+
+// === CHAPTER GENERATION ===
 async function generateChapter(prompt, chapterNum, userId, bookTopic) {
   const history = userHistories.get(userId) || [];
   const toc = history.find(msg => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents'));
@@ -229,23 +233,7 @@ async function generateChapter(prompt, chapterNum, userId, bookTopic) {
   return filename;
 }
 
-// === PROMPT GENERATOR (kept for compatibility, but modified) ===
-function generatePrompts(bookTopic) {
-  // First prompt is still for TOC (legacy behavior)
-  const tocPrompt = `Create a table of contents for a technical book about "${bookTopic}" with 10 chapters. Each chapter must have 3 unique subtopics. Output as a numbered list with chapter titles and subtopics.`;
-
-  // Chapter prompts are now minimal stubs that get filled with outline data later
-  const chapterPrompts = Array.from({ length: 10 }, (_, i) => 
-    `Write Chapter ${i + 1} about "${bookTopic}". Use the provided outline. Technical tone, 400 words, no analogies.`
-  );
-
-  // Conclusion prompt
-  const conclusionPrompt = `Write a conclusion and 3-5 beginner-friendly references for the book about "${bookTopic}".`;
-
-  return [tocPrompt, ...chapterPrompts, conclusionPrompt];
-}
-
-// === PDF GENERATION (signature unchanged) ===
+// === PDF GENERATION ===
 async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -335,59 +323,36 @@ export async function generateBookMedd(bookTopic, userId) {
   try {
     global.cancelFlags = global.cancelFlags || {};
 
-    // Initialize fresh history with better system prompt
-    userHistories.set(safeUserId, [{
-      role: "system",
-      content: "You are a technical author writing for undergrad STEM students. Be precise, factual, and avoid fluff."
-    }]);
-
-    // === NEW: Step 1 - Generate outline ===
+    // Step 1: Generate outline
     logger.info('Step 1: Generating outline...');
     const outline = await generateOutline(bookTopic, safeUserId);
     
-    // Store outline in history for chapter prompts to reference
-    const outlineText = outline.map(ch => 
-      `${ch.chapter}. ${ch.title}\n   - ${ch.subtopics.join('\n   - ')}`
-    ).join('\n');
-    userHistories.get(safeUserId).push({
-      role: "assistant",
-      content: `Table of Contents:\n\n${outlineText}`
-    });
+    // Step 2: Generate formatted TOC page
+    logger.info('Step 2: Generating Table of Contents page...');
+    const tocMarkdown = generateTableOfContents(outline, bookTopic);
+    const tocFile = path.join(CONFIG.OUTPUT_DIR, `${CONFIG.CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
+    saveToFile(tocFile, tocMarkdown);
+    chapterFiles.push(tocFile); // TOC appears first in PDF
 
-    // === Step 2: Generate prompts dynamically from outline ===
-    const prompts = [
-      // The TOC prompt is already "answered" by the outline we just generated
-      `Use the outline already provided above as the table of contents.`,
-      // Generate 10 chapter prompts from outline
-      ...outline.map((ch, i) => 
-        `Write Chapter ${ch.chapter}: "${ch.title}". Subtopics: ${ch.subtopics.join(', ')}. 400 words, technical tone, no analogies. Focus only on this chapter.`
-      ),
-      // Conclusion prompt
-      `Write a 200-word conclusion for "${bookTopic}" based on the outline.`
-    ];
+    // Step 3: Generate chapter prompts from outline
+    const prompts = outline.map(ch => 
+      `Write Chapter ${ch.chapter}: "${ch.title}". Subtopics: ${ch.subtopics.join(', ')}. 400 words, technical tone, no analogies.`
+    );
 
-    // === Step 3: Generate chapters ===
-    chapterFiles = [];
-    for (let i = 1; i <= outline.length; i++) {
+    // Step 4: Generate chapters
+    for (let i = 0; i < outline.length; i++) {
       if (global.cancelFlags?.[userId]) {
         delete global.cancelFlags[userId];
         throw new Error('Generation cancelled');
       }
 
-      logger.info(`Generating Chapter ${i} for ${bookTopic}`);
-      const file = await generateChapter(prompts[i], i, safeUserId, bookTopic);
+      logger.info(`Step 4.${i+1}: Generating Chapter ${i+1}...`);
+      const file = await generateChapter(prompts[i], i + 1, safeUserId, bookTopic);
       chapterFiles.push(file);
     }
 
-    // Step 4: Generate conclusion
-    logger.info('Generating conclusion...');
-    const conclusionFile = path.join(CONFIG.OUTPUT_DIR, `${CONFIG.CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
-    const conclusionText = await askAI(prompts[prompts.length - 1], safeUserId, bookTopic);
-    saveToFile(conclusionFile, cleanUpAIText(conclusionText));
-    chapterFiles.push(conclusionFile);
-
     // Step 5: Combine and generate PDF
-    logger.info('Combining chapters...');
+    logger.info('Step 5: Combining chapters...');
     const combinedContent = combineChapters(chapterFiles);
     
     const safeTopic = bookTopic.replace(/\s+/g, "_").slice(0, 20);
@@ -406,7 +371,6 @@ export async function generateBookMedd(bookTopic, userId) {
     // Always cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
-    logger.info(`Cleanup complete for ${safeUserId}`);
   }
 }
 
@@ -428,8 +392,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
