@@ -8,6 +8,7 @@ import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
+import FormData from 'form-data';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -195,6 +196,7 @@ function cleanUpAIText(text) {
     .trim();
 }
 
+
 async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -230,7 +232,10 @@ async function generatePDF(content, outputPath) {
       <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" rel="stylesheet">
       
       <style>
-        @page { margin: 80px 60px; }
+        @page { 
+          margin: 80px 60px 80px 60px;
+          size: A4;
+        }
         body { 
           font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif; 
           font-size: 13.5px; 
@@ -282,53 +287,79 @@ async function generatePDF(content, outputPath) {
   `;
 
   try {
-    const apiKey = process.env.PDFSHIFT_API_KEY || 'sk_00c7b14f58bd014b353826f34d96534a5d1fccec';
+    // ⚠️ **IMPORTANT**: Move this to environment variables!
+    // process.env.NUTRIENT_API_KEY
+    const apiKey = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
     
-    const response = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+    const formData = new FormData();
+    
+    // Create the instructions JSON
+    const instructions = {
+      parts: [
+        {
+          html: "index.html"
+        }
+      ],
+      // Configure PDF settings
+      output: {
+        format: "pdf",
+        pdf: {
+          margin: {
+            top: "80px",
+            bottom: "80px",
+            left: "60px",
+            right: "60px"
+          },
+          header: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>',
+            spacing: "5mm"
+          },
+          footer: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page {pageNumber} of {totalPages}</div>',
+            spacing: "5mm"
+          },
+          waitDelay: 2500,
+          printBackground: true
+        }
+      }
+    };
+    
+    // Append instructions
+    formData.append('instructions', JSON.stringify(instructions));
+    
+    // Append HTML as a "file" (Nutrient requires this format)
+    formData.append('index.html', Buffer.from(html), {
+      filename: 'index.html',
+      contentType: 'text/html'
+    });
+
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: {
-        'X-API-Key': apiKey,
-        'Content-Type': 'application/json'
+        'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        source: html,
-        sandbox: true,
-        format: 'A4',
-        margin: {
-          top: '80px',
-          bottom: '80px',
-          left: '60px',
-          right: '60px'
-        },
-        // Only use officially supported fields
-        header: {
-          source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-top: 10px;">bookgenai.vercel.app</div>`,
-          spacing: '5mm'
-        },
-        footer: {
-          source: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999; padding-bottom: 10px;">Page {{page}} of {{pages}}</div>`,
-          spacing: '5mm'
-        },
-        delay: 2000 // Wait 2 seconds for external scripts to load
-      })
+      body: formData
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`PDFShift API error: ${response.status} - ${errorText}`);
+      throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
     }
 
+    // Get the PDF buffer
     const pdfBuffer = await response.buffer();
+    
+    // Save to file
     fs.writeFileSync(outputPath, pdfBuffer);
-    logger.info(`Generated PDF: ${outputPath}`);
+    logger.info(`✅ Generated PDF with Nutrient DWS: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    logger.error(`PDF generation failed: ${error.message}`);
-    throw new Error(`PDFShift generation failed: ${error.message}`);
+    logger.error(`❌ PDF generation failed with Nutrient: ${error.message}`);
+    throw error;
   }
 }
-
+             
 // === Prompt Generator ===
 function generatePrompts(bookTopic) {
   return [
