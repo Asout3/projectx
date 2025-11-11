@@ -29,6 +29,7 @@
     "pdfshift": "latest",
     "node-fetch": "latest",
     "form-data": "latest",
+    "@google/generative-ai": "latest",
     "winston": "^3.17.0"
   }
 }
