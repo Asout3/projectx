@@ -42,8 +42,8 @@ const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
 
 // Rate Limiter: 6 seconds between requests = 10 RPM (safe under free tier)
 const limiter = new Bottleneck({
-  minTime: 6800,
-  maxConcurrent: 3
+  minTime: 6500,
+  maxConcurrent: 1
 });
 
 // Markdown & Code Highlighting
