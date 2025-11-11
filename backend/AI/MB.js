@@ -177,7 +177,7 @@ async function askAI(prompt, userId, bookTopic) {
   }
 }
 
-// === OUTLINE GENERATION (with retry) ===
+// === OUTLINE GENERATION ===
 async function generateOutline(bookTopic, userId) {
   const outlinePrompt = `You are a JSON generator. Create a 10-chapter outline for "${bookTopic}" (undergrad STEM level). 
 CRITICAL: Output ONLY valid JSON array with this exact structure:
@@ -216,7 +216,7 @@ Requirements:
   }));
 }
 
-// === TABLE OF CONTENTS GENERATOR (with validation) ===
+// === TABLE OF CONTENTS GENERATOR ===
 function generateTableOfContents(outline, bookTopic) {
   if (!Array.isArray(outline)) {
     logger.error('Outline is not an array, using fallback');
@@ -232,7 +232,6 @@ function generateTableOfContents(outline, bookTopic) {
   );
 
   if (validChapters.length === 0) {
-    // Emergency fallback
     validChapters.push(...Array.from({ length: 10 }, (_, i) => ({
       chapter: i + 1,
       title: `Chapter ${i + 1}`,
@@ -268,10 +267,8 @@ async function generateChapter(prompt, chapterNum, userId, bookTopic, correctTit
   const titleRegex = /^## Chapter \d+: .*$/m;
   
   if (titleRegex.test(cleanedText)) {
-    // Replace existing title
     cleanedText = cleanedText.replace(titleRegex, titleLine);
   } else {
-    // Prepend title
     cleanedText = `${titleLine}\n\n${cleanedText}`;
   }
   
@@ -280,7 +277,7 @@ async function generateChapter(prompt, chapterNum, userId, bookTopic, correctTit
   return filename;
 }
 
-// === MASTER FUNCTION (enforces title matching) ===
+// === MASTER FUNCTION (integrated) ===
 export async function generateBookMedd(bookTopic, userId) {
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   logger.info(`Starting book generation for ${safeUserId}`);
@@ -344,7 +341,6 @@ export async function generateBookMedd(bookTopic, userId) {
     logger.error(`Book generation failed: ${error.message}`);
     throw error;
   } finally {
-    // Cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
   }
@@ -368,11 +364,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
-
-
-
 
 
 
