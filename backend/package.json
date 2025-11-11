@@ -30,6 +30,7 @@
     "node-fetch": "latest",
     "form-data": "latest",
     "@google/generative-ai": "latest",
+    "bottleneck": "latest",
     "winston": "^3.17.0"
   }
 }
