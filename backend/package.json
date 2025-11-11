@@ -28,6 +28,7 @@
     "pdfkit-table": "^0.1.99",
     "pdfshift": "latest",
     "node-fetch": "latest",
+    "form-data": "latest",
     "winston": "^3.17.0"
   }
 }
