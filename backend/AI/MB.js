@@ -637,7 +637,7 @@ const bookQueue = async.queue(async (task, callback) => {
   } catch (error) {
     callback(error);
   }
-}, 3);
+}, 1);
 
 // === Master Function ===
 export async function generateBookMedd(bookTopic, userId) {
