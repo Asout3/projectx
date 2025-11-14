@@ -1,28 +1,29 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import fs from 'fs/promises';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
-import puppeteer from 'puppeteer';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import fetch from 'node-fetch';
+import FormData from 'form-data';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Constants
 const HISTORY_DIR = path.join(__dirname, 'history');
 const CHAPTER_PREFIX = 'chapter';
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const COMBINED_FILE = 'combined-chapters.txt';
 
+// Google AI Setup (CHANGED)
 const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
 const MODEL_NAME = 'gemini-2.0-flash';
 
+// Rate Limiter (NEW)
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -40,72 +41,94 @@ class RateLimiter {
     }
     this.requests.push(now);
   }
-
-  reset() {
-    this.requests = [];
-  }
 }
 
 const globalRateLimiter = new RateLimiter(15);
 
+// Logger
 const logger = winston.createLogger({
   level: 'info',
-  format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
   transports: [
     new winston.transports.File({ filename: 'bookgen.log' }),
-    new winston.transports.Console({ format: winston.format.simple() })
+    new winston.transports.Console()
   ]
 });
 
-async function ensureDirectories() {
-  await fs.mkdir(HISTORY_DIR, { recursive: true });
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
-}
+// Ensure directories exist
+if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
+// Per-user conversation history
+const userHistories = new Map();
+
+// === Utilities ===
 function getHistoryFile(userId) {
   return path.join(HISTORY_DIR, `history-${userId}.json`);
 }
 
-async function loadConversationHistory(userId) {
+function loadConversationHistory(userId) {
   const historyFile = getHistoryFile(userId);
   try {
-    const data = await fs.readFile(historyFile, 'utf8');
-    return JSON.parse(data);
+    return JSON.parse(fs.readFileSync(historyFile, 'utf8'));
   } catch {
+    logger.info(`No history found for user ${userId}. Starting fresh.`);
     return [];
   }
 }
 
-async function saveConversationHistory(userId, history) {
-  const historyFile = getHistoryFile(userId);
-  await fs.writeFile(historyFile, JSON.stringify(history, null, 2));
+function saveConversationHistory(userId, history) {
+  const trimmed = trimHistory(history);
+  fs.writeFileSync(getHistoryFile(userId), JSON.stringify(trimmed, null, 2));
+  logger.info(`Saved history for user ${userId}`);
 }
 
-async function saveToFile(filename, content) {
-  await fs.writeFile(filename, content);
+function trimHistory(messages) {
+  const tocMessage = messages.find(
+    (msg) => msg.role === "assistant" && msg.content.toLowerCase().includes("table of contents")
+  );
+  return tocMessage ? [{
+    role: "system",
+    content:
+      "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts. Table of Contents:\n\n" +
+      tocMessage.content,
+  }] : [];
+}
+
+function saveToFile(filename, content) {
+  fs.writeFileSync(filename, content);
   logger.info(`Saved: ${filename}`);
 }
 
-async function deleteFile(filePath) {
+function deleteFile(filePath) {
   try {
-    await fs.unlink(filePath);
-  } catch {}
+    fs.unlinkSync(filePath);
+    logger.info(`Deleted: ${filePath}`);
+  } catch (err) {
+    logger.error(`Error deleting ${filePath}: ${err.message}`);
+  }
 }
 
 function combineChapters(files) {
-  const fsSync = require('fs');
   let combined = '';
   for (const file of files) {
-    combined += fsSync.readFileSync(file, 'utf8') + '\n\n';
+    combined += fs.readFileSync(file, 'utf8') + '\n\n';
   }
-  fsSync.writeFileSync(path.join(OUTPUT_DIR, COMBINED_FILE), combined);
+  fs.writeFileSync(path.join(OUTPUT_DIR, COMBINED_FILE), combined);
   return combined;
 }
 
+// === AI === (CHANGED - Google AI instead of Together)
 async function askAI(prompt, userId, bookTopic) {
-  await globalRateLimiter.wait();
-  
-  const history = await loadConversationHistory(userId);
+  await globalRateLimiter.wait(); // Rate limit
+
+  const history = userHistories.get(userId) || [];
+  const trimmedHistory = trimHistory(history);
+
+  // Convert to Google AI format
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
     generationConfig: {
@@ -116,43 +139,71 @@ async function askAI(prompt, userId, bookTopic) {
   });
 
   const chat = model.startChat({
-    history: history.map(msg => ({
+    history: trimmedHistory.map(msg => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
     })),
   });
 
-  const result = await chat.sendMessage(prompt);
-  const reply = result.response.text();
+  try {
+    const result = await chat.sendMessage(prompt);
+    let reply = result.response.text();
 
-  history.push({ role: 'user', content: prompt });
-  history.push({ role: 'assistant', content: reply });
-  await saveConversationHistory(userId, history);
+    // Relevance check
+    const topicWords = bookTopic.toLowerCase().split(/\s+/);
+    const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
 
-  return reply;
+    if (!isRelevant) {
+      logger.warn(`🛑 Irrelevant output detected for [${userId}]: ${reply.slice(0, 80)}...`);
+      throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
+    }
+
+    // Save history
+    history.push({ role: 'user', content: prompt });
+    history.push({ role: 'assistant', content: reply });
+    userHistories.set(userId, history);
+    saveConversationHistory(userId, history);
+
+    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
+    return reply;
+
+  } catch (error) {
+    logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
+    throw error;
+  }
 }
 
+// === Chapter ===
 async function generateChapter(prompt, chapterNum, userId, bookTopic) {
-  const history = await loadConversationHistory(userId);
-  const toc = history.find(msg => msg.role === 'model' && msg.content.toLowerCase().includes('table of contents'));
-  const modifiedPrompt = toc ? `${prompt}\n\nRefer to this Table of Contents:\n\n${toc.content}` : prompt;
+  const history = userHistories.get(userId) || [];
+  const toc = history.find(
+    (msg) => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents')
+  );
+
+  const modifiedPrompt = toc
+    ? `${prompt}\n\nRefer to this Table of Contents:\n\n${toc.content}`
+    : prompt;
+
   const chapterText = await askAI(modifiedPrompt, userId, bookTopic);
   const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
-  await saveToFile(filename, chapterText);
+  saveToFile(filename, chapterText);
   return filename;
 }
 
+// === Formatter ===
 function formatMath(content) {
   const links = [];
   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
     links.push(`<a href="${url}" target="_blank">${text}</a>`);
     return `__LINK__${links.length - 1}__`;
   });
+
   content = content
     .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
     .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `\\(${base}^{${exp}}\\)`)
     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`);
+
   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
   return content;
 }
@@ -166,9 +217,11 @@ function cleanUpAIText(text) {
     .trim();
 }
 
+// === PDF Generation (UNCHANGED - using Nutrient) ===
 async function generatePDF(content, outputPath) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
+
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   const bookTitle = titleMatch ? titleMatch[1] : 'AI Generated Book';
 
@@ -247,69 +300,124 @@ async function generatePDF(content, outputPath) {
   </html>
   `;
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-
   try {
-    const page = await browser.newPage();
-    await page.setContent(enhancedHtml, { waitUntil: 'networkidle0' });
-    await page.pdf({
-      path: outputPath,
-      format: 'A4',
-      margin: { top: '90px', bottom: '80px', left: '70px', right: '70px' },
-      displayHeaderFooter: true,
-      headerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280; padding-top: 10px;">bookgen.ai</div>`,
-      footerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280; padding-bottom: 10px;">Page <span class="pageNumber"></span></div>`,
-      printBackground: true,
-      preferCSSPageSize: true
+    const apiKey = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
+    
+    const formData = new FormData();
+    const instructions = {
+      parts: [{ html: "index.html" }],
+      output: {
+        format: "pdf",
+        pdf: {
+          margin: {
+            top: "90px",
+            bottom: "80px",
+            left: "70px",
+            right: "70px"
+          },
+          header: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
+            spacing: "5mm"
+          },
+          footer: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
+            spacing: "5mm"
+          },
+          waitDelay: 3000,
+          printBackground: true,
+          preferCSSPageSize: true
+        }
+      }
+    };
+    
+    formData.append('instructions', JSON.stringify(instructions));
+    formData.append('index.html', Buffer.from(enhancedHtml), {
+      filename: 'index.html',
+      contentType: 'text/html'
     });
+
+    const response = await fetch('https://api.nutrient.io/build', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
+    }
+
+    const pdfBuffer = await response.buffer();
+    fs.writeFileSync(outputPath, pdfBuffer);
+    logger.info(`✅ Generated premium PDF: ${outputPath}`);
     return outputPath;
-  } finally {
-    await browser.close();
+
+  } catch (error) {
+    logger.error(`❌ PDF generation failed: ${error.message}`);
+    throw error;
   }
 }
 
+// === Prompt Generator ===
 function generatePrompts(bookTopic) {
-  const baseInstructions = `Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples and analogies. Write at least 400 words.`;
-  
-  const createChapterPrompt = (num, ordinal) => 
-    `Write Chapter ${num} about "${bookTopic}" (${ordinal} from your TOC). ${baseInstructions} Focus ONLY on this chapter's topic and subtopics. Include a diagram/table description.`;
-
   return [
-    `Create a table of contents for a beginner's book about "${bookTopic}" with 10 chapters. Each chapter must be unique, non-overlapping, with 2-3 subtopics. Output ONLY the numbered TOC with chapter titles and subtopics.`,
-    ...['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'].map((ordinal, i) => createChapterPrompt(i + 1, ordinal)),
-    `Write conclusion and references for "${bookTopic}". Summarize key ideas (200-300 words) and list 3-5 beginner-friendly resources with descriptions. Use clear headings "Conclusion" and "References".`
+    `As Hailu, you are going to follow this instruction that i will gave you. You must work with them for best out put. First write the title for the book then create a table of contents for a book about "${bookTopic}" for someone with no prior knowledge. The book must have 10 chapters, each covering a unique aspect of ${bookTopic} (e.g., for trading bots: what they are, how they work, strategies, risks, tools). Each chapter must be at least 400 words and written in a fun, simple, friendly tone, like explaining to a curious 16-year-old. Use clear, descriptive chapter titles and include more than 2–3 subtopics per chapter (e.g., "What is a trading bot?" or "How do trading bots make decisions?"). Output only the table of contents as a numbered list with chapter titles and subtopics. Ensure topics are distinct, avoid overlap, and focus strictly on ${bookTopic}. If ${bookTopic} is unclear, suggest relevant subtopics and explain why. Ignore any unrelated topics like space or previous requests. Remeber After you finish what you have been told you are goinig to stop after you finish creating the table of content you are done don't respond any more.`,
+
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 1 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the first chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter one from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter one after you are done writting chapter one stop responding.`,
+
+    `As Hailu,you are going to follow this instruction that i will gave you. Now you write Chapter 2 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the second chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter two from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter two after you are done writting chapter two stop responding.`,
+
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 3 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the third chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter three from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter three after you are done writting chapter three stop responding.`,
+    
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 4 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fourth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter four from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter four after you are done writting chapter four stop responding.`,
+    
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 5 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fifith chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter five from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter five after you are done writting chapter five stop responding.`,
+    
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 6 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the sixth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter six from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter six after you are done writting chapter six stop responding.`,    
+
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 7 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the seventh chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter seven from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter seven after you are done writting chapter seven stop responding.`,
+    
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 8 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the eightth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter eight from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter eight after you are done writting chapter eight stop responding.`,
+
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 9 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the nineth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter nine from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter nine after you are done writting chapter nine stop responding.`,
+    
+    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 10 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the tenth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter ten from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter ten after you are done writting chapter ten stop responding.`,
+    
+    `As Hailu, write the conclusion and references for the book about "${bookTopic}", based on the table of contents and chapters you created. Use a fun, simple, friendly tone, like explaining to a curious 19-year-old. In the conclusion (200–300 words), summarize the key ideas from all chapters and inspire the reader to learn more about ${bookTopic}. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., for trading bots: Investopedia, Python libraries, or educational videos) with a 1–2 sentence description each. Use clear headings ("Conclusion" and "References"). Avoid copyrighted material, ensure resources are accessible and appropriate for beginners, and focus only on ${bookTopic}. If resources are limited, suggest general learning platforms and explain why. Do not include the table of contents, chapter content, or unrelated topics like space.`
   ];
 }
 
+// === Task Queue ===
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const { bookTopic, userId } = task;
-    const result = await generateBookMedd(bookTopic, userId);
-    callback(null, result);
+    await generateBookMedd(bookTopic, userId);
+    callback();
   } catch (error) {
     callback(error);
   }
-}, 1);
+}, 1); // Process one book at a time
 
-const userHistories = new Map();
-
+// === Master Function ===
 export async function generateBookMedd(bookTopic, userId) {
-  const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 20)}`;
-  logger.info(`🚀 Starting book generation for ${safeUserId}`);
+  const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`;
+  logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
 
   try {
     global.cancelFlags = global.cancelFlags || {};
+
     userHistories.set(safeUserId, [{
-      role: "user",
-      parts: [{ text: "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts." }]
+      role: "system",
+      content:
+        "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts."
     }]);
 
     const prompts = generatePrompts(bookTopic);
     const chapterFiles = [];
 
+    // Generate chapters with delays
     for (let i = 0; i < prompts.length; i++) {
       if (global.cancelFlags?.[userId]) {
         delete global.cancelFlags[userId];
@@ -318,45 +426,37 @@ export async function generateBookMedd(bookTopic, userId) {
       }
 
       const chapterNum = i + 1;
-      logger.info(`📖 Generating Chapter ${chapterNum} for "${bookTopic}"`);
-
+      logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
       const file = await generateChapter(prompts[i], chapterNum, safeUserId, bookTopic);
       chapterFiles.push(file);
 
+      // Add delay between requests (4 seconds = 15 req/min max)
       if (i < prompts.length - 1) {
-        logger.info(`⏳ Rate limit delay: 4 seconds...`);
+        logger.info(`Rate limit delay: 4 seconds...`);
         await new Promise(resolve => setTimeout(resolve, 4000));
       }
     }
 
-    logger.info('📄 Combining chapters...');
     const combinedContent = combineChapters(chapterFiles);
-    const safeTopic = bookTopic.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
-    const fileName = `book_${safeUserId}_${Date.now()}.pdf`;
+
+    const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
+    const fileName = `output_${safeUserId}_${safeTopic}.pdf`;
     const outputPath = path.join(OUTPUT_DIR, fileName);
-    
-    logger.info('🖨️  Generating PDF...');
     await generatePDF(combinedContent, outputPath);
 
-    logger.info('🧹 Cleaning up temporary files...');
-    for (const file of chapterFiles) {
-      await deleteFile(file);
-    }
+    chapterFiles.forEach(deleteFile);
+    userHistories.delete(safeUserId);
 
-    logger.info(`✅ Book generation complete: ${outputPath}`);
+    logger.info(`Book generation complete. Output: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    logger.error(`❌ Book generation failed for ${safeUserId}: ${error.message}`);
+    logger.error(`Book generation failed for ${safeUserId}: ${error.message}`);
     throw error;
-  } finally {
-    userHistories.delete(safeUserId);
-    try {
-      await fs.unlink(getHistoryFile(safeUserId));
-    } catch {}
   }
 }
 
+// === API Wrapper ===
 export function queueBookGeneration(bookTopic, userId) {
   return new Promise((resolve, reject) => {
     bookQueue.push({ bookTopic, userId }, (error, result) => {
@@ -369,11 +469,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-ensureDirectories().catch(err => {
-  logger.error('Failed to create directories:', err);
-});
-
 
 
 
