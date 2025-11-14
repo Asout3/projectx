@@ -432,7 +432,7 @@ export async function generateBookMedd(bookTopic, userId) {
   try {
     // Initialize history with a stable system prompt
     userHistories.set(safeUserId, [
-      { role: 'system', content: BASE_SYSTEM_PROMPT }
+      { role: 'user', content: BASE_SYSTEM_PROMPT }
     ]);
     saveConversationHistory(safeUserId, userHistories.get(safeUserId));
 
