@@ -21,7 +21,7 @@ const COMBINED_FILE = 'combined-chapters.txt';
 
 // Google AI Setup (CHANGED)
 const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
-const MODEL_NAME = 'gemini-2.0-flash';
+const MODEL_NAME = 'gemini-2.5-flash';
 
 // Rate Limiter (NEW)
 class RateLimiter {
@@ -433,7 +433,7 @@ export async function generateBookMedd(bookTopic, userId) {
       // Add delay between requests (4 seconds = 15 req/min max)
       if (i < prompts.length - 1) {
         logger.info(`Rate limit delay: 4 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 4000));
+        await new Promise(resolve => setTimeout(resolve, 6000));
       }
     }
 
