@@ -1,9 +1,10 @@
-import { GoogleGenerativeAI } from '@google/gen-ai';
+import { GoogleGenerativeAI } from '@google/generative-ai'; // FIXED: Correct package name
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
@@ -15,14 +16,17 @@ const __dirname = dirname(__filename);
 // Constants
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
-const COMBINED_FILE = 'combined-chapters.txt';
+const CHAPTER_PREFIX = 'chapter';
 
 // Model config
 const MODEL_NAME = 'gemini-2.5-flash';
 const RATE_LIMIT = 15;
 
-// Setup
-const genAI = new GoogleGenerativeAI('YOUR_API_KEY'); // MOVE TO ENV VAR
+// Setup - MOVE THESE TO ENVIRONMENT VARIABLES IN PRODUCTION
+const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo'; // Google AI API Key
+const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC'; // Nutrient API Key
+
+const genAI = new GoogleGenerativeAI(API_KEY);
 const globalRateLimiter = new RateLimiter(RATE_LIMIT);
 const userHistories = new Map();
 
@@ -35,7 +39,7 @@ const logger = winston.createLogger({
   ),
   transports: [
     new winston.transports.File({ filename: 'bookgen.log' }),
-    new winston.transports.Console()
+    new winston.transports.Console({ format: winston.format.simple() })
   ]
 });
 
@@ -43,7 +47,7 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// Configure marked
+// Configure marked for better formatting
 marked.setOptions({
   headerIds: false,
   breaks: true,
@@ -55,14 +59,6 @@ marked.setOptions({
     return code;
   }
 });
-
-// NEW: Chapter structure definition
-const CHAPTER_STRUCTURE = [
-  { type: 'toc', title: 'Table of Contents' },
-  { type: 'chapter', number: 1, title: 'Introduction and Basics' },
-  { type: 'chapter', number: 2, title: 'Advanced Concepts' },
-  // ... you'll generate actual titles from TOC
-];
 
 // Classes
 class RateLimiter {
@@ -93,7 +89,6 @@ function loadConversationHistory(userId) {
   try {
     return JSON.parse(fs.readFileSync(getHistoryFile(userId), 'utf8'));
   } catch {
-    logger.info(`No history found for ${userId}. Starting fresh.`);
     return [];
   }
 }
@@ -112,48 +107,83 @@ function deleteFile(filePath) {
     fs.unlinkSync(filePath);
     logger.info(`Deleted: ${filePath}`);
   } catch (err) {
-    logger.error(`Error deleting: ${err.message}`);
+    logger.warn(`Delete failed: ${filePath}`);
   }
 }
 
-// NEW: Clean up AI output more aggressively
+// ENHANCED: More aggressive cleaning to remove duplicates and childish language
 function cleanUpAIText(text) {
+  if (!text) return '';
+  
   return text
-    .replace(/^(?:[-=_~\s]{5,})$/gm, "") // Remove separator lines
-    .replace(/\n{3,}/g, "\n\n") // Normalize spacing
-    .replace(/\n\s*$/g, "") // Trailing whitespace
-    .replace(/[\u2013\u2014]/g, "-") // Fix dashes
-    .replace(/^Hello there.*I'm Hailu.*$/gim, "") // REMOVE DUPLICATE INTROS
-    .replace(/^Chapter \d+:.*$/gm, "") // REMOVE INLINE CHAPTER HEADERS
-    .replace(/^#\s+\d+\.\s+/gm, "# ") // Fix numbered headings
+    // Remove duplicate intros
+    .replace(/^Hello there.*I'm Hailu.*$/gim, '')
+    .replace(/^Hi there.*I'm Hailu.*$/gim, '')
+    .replace(/^Hey there.*I'm Hailu.*$/gim, '')
+    // Remove inline chapter headers
+    .replace(/^Chapter \d+:.*$/gm, '')
+    .replace(/^#\s*\d+\.\s+/gm, '# ')
+    // Fix weird spacing
+    .replace(/H\s+ello/g, 'Hello')
+    .replace(/T\s+he/g, 'The')
+    // Normalize whitespace
+    .replace(/^(?:[-=_~\s]{5,})$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n\s*$/g, "")
+    // Fix dashes
+    .replace(/[\u2013\u2014]/g, "-")
+    // Remove overly childish phrases
+    .replace(/\b(super )?duper\b/gi, '')
+    .replace(/\b(purr-fect|paws-abilities|tabby)\b/gi, '')
+    .replace(/\b(meow-nificent|furr)\b/gi, '')
     .trim();
 }
 
-// NEW: Extract chapter titles from TOC
+// ENHANCED: Better TOC parsing with validation
 function parseTOC(tocContent) {
   const chapters = [];
-  const lines = tocContent.split('\n');
+  const lines = tocContent.split('\n').filter(line => line.trim());
   
   for (const line of lines) {
-    const match = line.match(/^\d+\.\s+(.+?)(?:\:|$)/i);
+    // Match: "1. Title" or "1. Title: subtitle" or "1) Title"
+    const match = line.match(/^(?:\d+[.)]\s+)(.+?)(?:\s*[:–-]\s*.+)?$/i);
     if (match) {
-      chapters.push(match[1].trim());
+      const title = match[1].trim();
+      // Skip TOC entries that are clearly subtopics
+      if (!title.match(/^(subtopic|topic|section)/i) && title.length > 5) {
+        chapters.push(title);
+      }
     }
   }
   
-  // If no titles found, use defaults
-  return chapters.length > 0 ? chapters : [
-    'Introduction',
-    'Core Concepts',
-    'Practical Applications',
-    'Advanced Topics',
-    'Case Studies',
-    'Troubleshooting',
-    'Tools and Resources',
-    'Best Practices',
-    'Future Trends',
-    'Conclusion'
-  ];
+  // Validate we got exactly 10 chapters
+  if (chapters.length !== 10) {
+    logger.warn(`Expected 10 chapters, got ${chapters.length}. Using defaults.`);
+    return [
+      'Introduction to the Topic',
+      'Core Concepts and Principles',
+      'Practical Applications',
+      'Common Challenges and Solutions',
+      'Tools and Technologies',
+      'Best Practices',
+      'Case Studies and Examples',
+      'Troubleshooting Guide',
+      'Future Trends',
+      'Conclusion and Next Steps'
+    ];
+  }
+  
+  return chapters.slice(0, 10); // Ensure exactly 10
+}
+
+// Math formatting
+function formatMath(content) {
+  return content
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
+    .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
+    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
+    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 }
 
 // AI Interaction
@@ -164,7 +194,7 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
     model: MODEL_NAME,
     generationConfig: {
       maxOutputTokens: 4000,
-      temperature: 0.6,
+      temperature: 0.7, // Slightly higher for more natural writing
       topP: 0.9,
     },
   });
@@ -173,12 +203,10 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
     const result = await model.generateContent(prompt);
     let reply = result.response.text();
     
-    // Validate response
-    if (!reply || reply.trim().length < 100) {
+    if (!reply || reply.trim().length < 200) {
       throw new Error('Response too short or empty');
     }
 
-    // Save history if needed
     if (options.saveToHistory) {
       const history = userHistories.get(userId) || [];
       history.push({ role: 'user', content: prompt });
@@ -187,86 +215,71 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
       saveConversationHistory(userId, history);
     }
 
-    logger.info(`✅ Valid response for [${userId}]: ${reply.slice(0, 50)}...`);
+    logger.info(`✅ AI response: ${reply.slice(0, 60)}...`);
     return reply;
 
   } catch (error) {
-    logger.error(`❌ AI request failed for [${userId}]: ${error.message}`);
+    logger.error(`❌ AI request failed: ${error.message}`);
     throw error;
   }
 }
 
-// NEW: Generate TOC first, then chapters
+// Generate TOC
 async function generateTOC(bookTopic, userId) {
-  const prompt = `As Hailu, create a detailed table of contents for a beginner's book about "${bookTopic}". 
-  Requirements:
-  - Exactly 10 chapters
-  - Each chapter must have a clear, descriptive title (no generic "Chapter 1")
-  - Include 3-4 subtopics per chapter
-  - Format as a SIMPLE numbered list
-  - Focus ONLY on ${bookTopic}
-  - NO introduction, NO fluff, just the TOC
-  
-  Example format:
-  1. What Are Cats? A Furry Introduction
-  2. Super Senses: How Cats See, Hear, and Smell
-  3. [and so on...]`;
-  
+  const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
+
+Requirements:
+- EXACTLY 10 chapters with descriptive, unique titles
+- NO generic names like "Introduction" or "Chapter 1"
+- EACH title must clearly reflect the content (e.g., "Understanding Feline Behavior", "Advanced Nutrition Strategies")
+- Format as simple numbered list: "1. Title", "2. Title", etc.
+- NO subtitles, NO subtopics, NO extra text
+- Focus ONLY on ${bookTopic}
+
+Example output:
+1. The Evolution of Domestic Cats
+2. Decoding Feline Body Language
+3. [and 8 more...]`;
+
   const toc = await askAI(prompt, userId, bookTopic, { saveToHistory: true });
   return cleanUpAIText(toc);
 }
 
-// NEW: Generate single chapter
+// Generate chapter
 async function generateChapter(bookTopic, chapterNumber, chapterTitle, userId) {
-  const prompt = `As Hailu, write Chapter ${chapterNumber}: "${chapterTitle}" for a beginner's book about "${bookTopic}".
-  
-  IMPORTANT: DO NOT write any introduction about yourself. DO NOT include chapter numbers in your content. Just write the actual content.
-  
-  Requirements:
-  - Minimum 400 words
-  - Fun, simple tone (explain to a curious 16-year-old)
-  - Include 1-2 analogies
-  - Include 1 practical example
-  - Use clear markdown headings (## for subsections)
-  - Describe one diagram or table that would help understanding
-  - Focus ONLY on "${chapterTitle}" - no other chapters
-  - End with a brief summary
-  
-  Book topic: ${bookTopic}
-  Chapter title: ${chapterTitle}`;
-  
+  const prompt = `Write Chapter ${chapterNumber}: "${chapterTitle}" for a book about "${bookTopic}".
+
+CRITICAL INSTRUCTIONS:
+- DO NOT include any introduction about yourself
+- DO NOT write "Chapter ${chapterNumber}" or the title at the start
+- Start directly with the content
+- Write in a clear, accessible tone (like explaining to an intelligent adult beginner)
+- Use analogies sparingly and make them practical
+- Minimum 400 words
+- Use markdown headings (## for subsections)
+- Focus ONLY on "${chapterTitle}"
+- End with a brief summary
+
+Content for Chapter ${chapterNumber}:`;
+
   const content = await askAI(prompt, userId, bookTopic);
   return cleanUpAIText(content);
 }
 
-// NEW: Generate conclusion
+// Generate conclusion
 async function generateConclusion(bookTopic, chapterTitles, userId) {
-  const prompt = `As Hailu, write a conclusion for a book about "${bookTopic}".
-  
-  Requirements:
-  - 200-300 words
-  - Summarize key ideas from: ${chapterTitles.join(', ')}
-  - Inspire reader to learn more
-  - Friendly, simple tone
-  - Include "References" section with 3-5 beginner-friendly resources
-  - Do NOT write any introduction about yourself`;
-  
+  const prompt = `Write a conclusion for "${bookTopic}".
+
+Summarize key ideas from: ${chapterTitles.join(', ')}
+Provide 3-5 beginner-friendly resources with brief descriptions.
+Keep it professional and concise (250-300 words).
+Do NOT introduce yourself.`;
+
   const conclusion = await askAI(prompt, userId, bookTopic);
   return cleanUpAIText(conclusion);
 }
 
-// Content processing
-function formatMath(content) {
-  // Keep existing math formatting but make it safer
-  return content
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-    .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
-    .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
-    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
-    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
-}
-
-// NEW: Build HTML with proper chapter separation
+// Build HTML
 function buildHTML(content, bookTitle) {
   const processed = formatMath(content);
   
@@ -274,10 +287,7 @@ function buildHTML(content, bookTitle) {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${bookTitle}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
@@ -288,25 +298,25 @@ function buildHTML(content, bookTitle) {
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
-    .cover-page { page: cover; }
+    .cover-page { page: cover; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
     @page cover { margin: 0; }
-    body { font-family: 'Merriweather', serif; line-height: 1.8; hyphens: auto; }
-    .cover-page { /* ... styles ... */ }
+    body { font-family: 'Merriweather', serif; line-height: 1.8; hyphens: auto; color: #1f2937; }
     .chapter-break { page-break-before: always; }
-    h1, h2, h3 { font-family: 'Inter', sans-serif; }
-    h1 { font-size: 28px; border-bottom: 3px solid #667eea; }
-    h2 { font-size: 22px; color: #4b5563; }
-    pre { background: #1f2937; padding: 20px; border-radius: 8px; }
+    h1, h2, h3 { font-family: 'Inter', sans-serif; font-weight: 600; }
+    h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; }
+    h2 { font-size: 22px; color: #4b5563; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; }
+    pre { background: #1f2937; padding: 20px; border-radius: 8px; color: #e5e7eb; white-space: pre-wrap; }
     table { width: 100%; border-collapse: collapse; margin: 2em 0; }
-    th, td { padding: 12px; border: 1px solid #e5e7eb; }
+    th, td { padding: 12px; border: 1px solid #e5e7eb; text-align: left; }
     tr:nth-child(even) { background: #f9fafb; }
-    .disclaimer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; }
+    .disclaimer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; }
   </style>
 </head>
 <body>
   <div class="cover-page">
     <h1>${bookTitle}</h1>
-    <p>Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</p>
+    <p style="font-size: 18px; margin-top: 2em;">A Comprehensive Guide</p>
+    <p style="position: absolute; bottom: 60px; font-size: 14px;">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</p>
   </div>
   ${marked.parse(processed)}
   <div class="disclaimer">
@@ -341,12 +351,13 @@ async function generatePDF(content, outputPath, bookTitle) {
 
     const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${process.env.NUTRIENT_API_KEY}` },
+      headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: formData
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status} - ${await response.text()}`);
+      const errorText = await response.text();
+      throw new Error(`API ${response.status}: ${errorText}`);
     }
 
     fs.writeFileSync(outputPath, await response.buffer());
@@ -361,41 +372,46 @@ async function generatePDF(content, outputPath, bookTitle) {
 
 // Main generation function
 export async function generateBookMedd(rawTopic, userId) {
+  // Extract actual topic from command
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`;
   
-  logger.info(`Starting: ${bookTopic} for ${safeUserId}`);
+  logger.info(`=== Starting book generation ===`);
+  logger.info(`Topic: "${bookTopic}"`);
+  logger.info(`User: ${safeUserId}`);
 
   try {
-    // Clear previous history
+    // Clear any old history
     userHistories.delete(safeUserId);
     
-    // 1. Generate TOC
-    logger.info('Generating TOC...');
+    // 1. Generate and parse TOC
+    logger.info('Step 1/3: Generating Table of Contents...');
     const tocContent = await generateTOC(bookTopic, safeUserId);
     const chapterTitles = parseTOC(tocContent);
     
+    logger.info(`Generated ${chapterTitles.length} chapters: ${chapterTitles.join(', ')}`);
+    
     // Save TOC
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
-    saveToFile(tocFile, `# Table of Contents\n\n${tocContent}\n`);
-    
+    saveToFile(tocFile, `# Table of Contents\n\n${tocContent}\n\n---\n`);
     const chapterFiles = [tocFile];
     
     // 2. Generate chapters
+    logger.info('Step 2/3: Generating chapters...');
     for (let i = 0; i < chapterTitles.length; i++) {
       if (global.cancelFlags?.[userId]) {
         delete global.cancelFlags[userId];
-        throw new Error('Generation cancelled');
+        throw new Error('Generation cancelled by user');
       }
 
       const chapterNum = i + 1;
       const title = chapterTitles[i];
       
-      logger.info(`Generating Chapter ${chapterNum}: ${title}`);
+      logger.info(`  Chapter ${chapterNum}: ${title}`);
       
       const chapterContent = await generateChapter(bookTopic, chapterNum, title, safeUserId);
       
-      // Add page break before chapter
+      // Add clear separation
       const separatedContent = `\n<div class="chapter-break"></div>\n\n# Chapter ${chapterNum}: ${title}\n\n${chapterContent}\n\n---\n`;
       
       const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chapterNum}.txt`);
@@ -409,28 +425,29 @@ export async function generateBookMedd(rawTopic, userId) {
     }
     
     // 3. Generate conclusion
-    logger.info('Generating conclusion...');
+    logger.info('Step 3/3: Generating conclusion...');
     const conclusion = await generateConclusion(bookTopic, chapterTitles, safeUserId);
     const conclusionFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
     saveToFile(conclusionFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
     chapterFiles.push(conclusionFile);
     
-    // 4. Combine all content
-    const combinedContent = chapterFiles.map(file => {
-      return fs.readFileSync(file, 'utf8');
-    }).join('\n');
+    // Combine all content
+    const combinedContent = chapterFiles.map(file => 
+      fs.readFileSync(file, 'utf8')
+    ).join('\n');
     
-    // 5. Generate PDF
+    // Generate PDF
     const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, '_');
     const outputPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeTopic}.pdf`);
     
     await generatePDF(combinedContent, outputPath, bookTopic);
     
-    // 6. Cleanup
+    // Cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
     
-    logger.info(`✅ Book complete: ${outputPath}`);
+    logger.info(`=== Book generation complete ===`);
+    logger.info(`Output: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
@@ -439,7 +456,7 @@ export async function generateBookMedd(rawTopic, userId) {
   }
 }
 
-// Queue wrapper (unchanged)
+// Queue system
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const result = await generateBookMedd(task.bookTopic, task.userId);
@@ -457,7 +474,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
