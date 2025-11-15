@@ -1,18 +1,17 @@
-// AI/MB.js – FULLY FIXED & MERGED WITH OLD RENDERING PIPELINE
+// AI/MB.js – FIXED: Chapter Titles, Code Blocks & Tables
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 // ==================== CORE SETUP ====================
 class RateLimiter {
@@ -36,7 +35,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-preview-09-2025'; // Your working model
+const MODEL_NAME = 'gemini-2.5-flash-preview-09-2025';
 const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo';
 const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
 
@@ -55,28 +54,35 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// ==================== TEXT PROCESSING ====================
+// ==================== FIXED TEXT PROCESSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   return text
+    // Remove greeting lines
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-    .replace(/```[\w]*\n?([\s\S]*?)\n?```/g, '$1')
+    // Remove trailing asterisks (fixes "Chapter 1: Title*")
+    .replace(/\*\s*$/g, '')
+    // Remove leading asterisks on lines
+    .replace(/^\*\s*/gm, '')
+    // Fix escaped parentheses/brackets
     .replace(/\\\(/g, '(').replace(/\\\)/g, ')')
     .replace(/\\\[/g, '[').replace(/\\\]/g, ']')
+    // Collapse excessive newlines
     .replace(/\n{3,}/g, '\n\n')
+    // Normalize dashes
     .replace(/[\u2013\u2014]/g, '-')
     .trim();
 }
 
 function formatMath(content) {
   const links = [];
-  // Extract and protect links
+  // Protect links
   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
     links.push(`<a href="${url}" target="_blank">${text}</a>`);
     return `__LINK__${links.length - 1}__`;
   });
 
-  // Process math
+  // Convert math notation
   content = content
     .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
     .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
@@ -92,7 +98,7 @@ function formatMath(content) {
 marked.setOptions({
   headerIds: false,
   breaks: true,
-  gfm: true,
+  gfm: true, // Enables tables and other GitHub-flavored markdown
   highlight: function(code, lang) {
     if (lang && hljs.getLanguage(lang)) {
       return hljs.highlight(code, { language: lang }).value;
@@ -126,7 +132,7 @@ function saveToFile(filename, content) {
 function deleteFile(filePath) {
   try {
     fs.unlinkSync(filePath);
-  } catch (err) {
+  } catch {
     logger.warn(`Delete failed: ${filePath}`);
   }
 }
@@ -139,8 +145,8 @@ function parseTOC(tocContent) {
 
   for (const line of lines) {
     const chapMatch = line.match(/^(\d+[\.\)]|\d+\s+|[-\*•]|\d+\s*[-\):–—]?)\s*(.+)$/i);
-    if (chapMatch) {
-      const title = chapMatch[2].trim().replace(/[:–—-].*$/, '').trim();
+    if (chapMatch && !line.startsWith('  -')) {
+      const title = chapMatch[2].trim().replace(/[:–—*].*$/, '').trim();
       if (title && title.length > 5 && !/^(introduction|chapter|basics|overview|conclusion)/i.test(title)) {
         if (current) chapters.push(current);
         current = { title, subtopics: [] };
@@ -172,7 +178,7 @@ function generateFallbackTOC(bookTopic) {
     "Building Your First Project"
   ];
   const chapters = base.map((t, i) => ({
-    title: `${i + 1}. ${t} in ${bookTopic.split(' ').pop()}`,
+    title: `${t} in ${bookTopic.split(' ').pop()}`,
     subtopics: [
       "Understanding the core concept",
       "Practical code examples",
@@ -180,7 +186,7 @@ function generateFallbackTOC(bookTopic) {
     ]
   }));
   const raw = chapters.map(c =>
-    `${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
+    `Chapter ${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
   ).join('\n');
   return { raw, parsed: chapters };
 }
@@ -240,11 +246,11 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
 async function generateTOC(bookTopic, userId) {
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 Requirements:
-- EXACTLY 10 chapters with unique titles
+- EXACTLY 10 chapters with descriptive, unique titles
 - Each chapter MUST have 3-5 subtopics, indented with "   - "
-- NO generic names like "Introduction"
-- Format: "1. Title\n   - Subtopic1\n   - Subtopic2"
-- Focus ONLY on ${bookTopic}`;
+- NO generic names like "Introduction" or "Chapter X"
+- Format: "1. Title Here\n   - Subtopic 1\n   - Subtopic 2"
+- NO explanations, NO markdown, just the TOC`;
 
   let attempts = 0;
   let lastRaw = '';
@@ -278,13 +284,14 @@ CRITICAL:
 - NO self-introduction, NO "Chapter ${chapterNumber}" heading
 - Start directly with content
 - 400+ words, clear tone, practical examples
-- Structure:
+- MUST follow EXACT structure:
   1) Short intro (50-80 words)
   2) ## Concepts — explain key ideas (200-300 words)
   3) ## Example 1 — show code with explanation (include fenced code block)
   4) ## Example 2 — practical applied snippet
   5) ## Exercise — 1 short exercise and "## Solution" with answer
   End with "Further reading:" and 2 references.
+- Use markdown tables for comparisons or reference data where appropriate
 - Incorporate these subsections: ${chapterInfo.subtopics.map(s => `## ${s}`).join('\n')}
 - Output only the chapter content.`;
 
@@ -309,13 +316,11 @@ Include 3-5 resources with descriptions.
 
 // ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle) {
-  // Clean and format the content first
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
-
-  // Extract title for cover
+  
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
-  const displayTitle = titleMatch ? titleMatch[1] : bookTitle;
+  const displayTitle = titleMatch ? titleMatch[1].replace(/^Chapter\s+\d+:\s*/, '').trim() : bookTitle;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -336,6 +341,8 @@ function buildEnhancedHTML(content, bookTitle) {
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
@@ -516,8 +523,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
