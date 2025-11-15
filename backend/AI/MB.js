@@ -1,4 +1,4 @@
-// AI/MB.js – FIXED TOC, Clean Titles & Formatting
+// AI/MB.js – FIXED: TOC parsing, dynamic languages, no Java lock-in
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -54,6 +54,37 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
+// ==================== LANGUAGE DETECTION ====================
+/**
+ * Detects programming language from topic for proper syntax highlighting
+ * CHANGED: New function to dynamically determine code block language
+ */
+function detectLanguage(topic) {
+  const langMap = {
+    'python': 'python',
+    'javascript': 'javascript',
+    'js': 'javascript',
+    'java': 'java',
+    'scala': 'scala',
+    'cpp': 'cpp',
+    'c++': 'cpp',
+    'csharp': 'csharp',
+    'c#': 'csharp',
+    'go': 'go',
+    'rust': 'rust',
+    'typescript': 'typescript',
+    'ts': 'typescript',
+    'react': 'jsx',
+    'node': 'javascript'
+  };
+  
+  const lowerTopic = topic.toLowerCase();
+  for (const [key, lang] of Object.entries(langMap)) {
+    if (lowerTopic.includes(key)) return lang;
+  }
+  return 'java'; // Default fallback only if nothing matches
+}
+
 // ==================== TEXT PROCESSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
@@ -68,7 +99,6 @@ function cleanUpAIText(text) {
     .replace(/\*\s*$/gm, '')
     // Fix split words (e.g., "J ava" -> "Java") - but NOT in code blocks
     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
-      // Don't fix if it looks like code or markdown
       if (match.includes('`') || match.includes('```')) return match;
       return p1 + p2;
     })
@@ -167,6 +197,10 @@ function deleteFile(filePath) {
 }
 
 // ==================== TOC PARSER ====================
+/**
+ * Parses AI-generated Table of Contents
+ * CHANGED: Fixed regex to match "Chapter X:" format, prevent false line merging
+ */
 function parseTOC(tocContent) {
   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
   const chapters = [];
@@ -178,25 +212,31 @@ function parseTOC(tocContent) {
     // Skip empty lines
     if (!line) continue;
 
-    // Try to fix split lines (e.g., "G" followed by "etting Started...")
+    // FIX 1: Smarter line merging - only merge single letters that are clearly continuations
     if (line.length === 1 && /^[A-Z]$/.test(line) && i + 1 < lines.length) {
       const nextLine = lines[i + 1];
-      if (nextLine && nextLine.length > 5 && !nextLine.startsWith('-')) {
+      // Only merge if next line is NOT a chapter/subtopic and doesn't start with space/dash
+      if (nextLine && nextLine.length > 5 && !nextLine.match(/^[\s]*[-•*·\d]/) && !nextLine.startsWith(' ')) {
         line = line + nextLine;
         i++; // Skip next line since we merged it
       }
     }
 
-    // Match chapter lines (not subtopics)
-    const chapMatch = line.match(/^(?:\d+[\.\)]|\d+\s+|[-\*•]|\d+\s*[-\):–—]?)\s*(.+)$/i);
+    // FIX 2: Support both "Chapter 1: Title" and "1. Title" formats
+    const chapterMatch = line.match(/^Chapter\s+\d+:\s*(.+)$/i);
+    const simpleMatch = line.match(/^(?:\d+[\.\):]|\d+\s+|[-\*•])\s*(.+)$/i);
+    const chapMatch = chapterMatch || simpleMatch;
+    
     if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
       let title = chapMatch[1].trim().replace(/[:–—*].*$/, '').trim();
-      // Clean up title: remove trailing asterisks and numbers
+      
+      // FIX 3: Remove trailing asterisks and numbers more safely
       title = title.replace(/\*\s*$/g, '').replace(/^\d+\.\s*/, '');
       
-      // If title contains "in language", replace with actual topic
-      title = title.replace(/\bin\s+language\b/i, 'in Java');
+      // FIX 4: Remove forced Java replacement - let AI use natural language
+      // REMOVED: title = title.replace(/\bin\s+language\b/i, 'in Java');
       
+      // Validate it's a real chapter title
       if (title && title.length > 5 && !/^(introduction|chapter|basics|overview|conclusion)/i.test(title)) {
         if (current) chapters.push(current);
         current = { title, subtopics: [] };
@@ -210,13 +250,22 @@ function parseTOC(tocContent) {
   }
   if (current) chapters.push(current);
 
+  // Filter for valid chapters and limit to 10
   const valid = chapters.filter(c => c.subtopics.length >= 2);
+  
+  // DEBUG: Log what we parsed
+  logger.debug(`Parsed ${valid.length} valid chapters from ${chapters.length} total`);
+  
   return valid.slice(0, 10);
 }
 
+/**
+ * Generates fallback TOC when AI fails
+ * CHANGED: More intelligent topic handling, no forced "in Java"
+ */
 function generateFallbackTOC(bookTopic) {
-  // Clean the topic name
-  const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim() || 'Java';
+  // Extract clean topic name, but don't force append
+  const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
   
   const base = [
     "Getting Started with Variables and Data Types",
@@ -231,8 +280,12 @@ function generateFallbackTOC(bookTopic) {
     "Building Your First Project"
   ];
   
+  // Only append topic if it's a short, clear tech name (not a phrase)
+  const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
+  const suffix = isTechName ? ` in ${cleanTopic}` : '';
+  
   const chapters = base.map((t, i) => ({
-    title: `${t} in ${cleanTopic}`,
+    title: `${t}${suffix}`,
     subtopics: [
       "Understanding the core concept",
       "Practical code examples",
@@ -328,7 +381,7 @@ Chapter 2: Variables and Data Types
       lastRaw = rawTOC;
       
       // Debug log
-      logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC}`);
+      logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC.substring(0, 500)}...`);
       
       const cleaned = cleanUpAIText(rawTOC);
       const parsed = parseTOC(cleaned);
@@ -350,11 +403,14 @@ Chapter 2: Variables and Data Types
 }
 
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+  // CHANGED: Detect language dynamically instead of hardcoding Java
+  const language = detectLanguage(bookTopic);
+  
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 CRITICAL FORMATTING RULES:
 - Start with "## ${chapterInfo.title}" as the main heading
 - NO "Chapter ${chapterNumber}" prefix in the heading
-- Use proper markdown code fences with language tags: \`\`\`java ... \`\`\`
+- Use proper markdown code fences with language tags: \`\`\`${language} ... \`\`\`  // CHANGED: Dynamic language
 - Use markdown tables (| header | header |) for comparisons
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
@@ -390,6 +446,7 @@ Include 3-5 resources with descriptions.
 
 // ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle) {
+  // CHANGED: Extract clean title for PDF cover
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   
@@ -406,7 +463,7 @@ function buildEnhancedHTML(content, bookTitle) {
   <title>${displayTitle} - Bookgen.ai</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght:400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
@@ -419,6 +476,7 @@ function buildEnhancedHTML(content, bookTitle) {
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
@@ -605,7 +663,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
