@@ -1,10 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/gen-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
@@ -15,15 +14,57 @@ const __dirname = dirname(__filename);
 
 // Constants
 const HISTORY_DIR = path.join(__dirname, 'history');
-const CHAPTER_PREFIX = 'chapter';
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const COMBINED_FILE = 'combined-chapters.txt';
 
-// Google AI Setup (CHANGED)
-const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
+// Model config
 const MODEL_NAME = 'gemini-2.5-flash';
+const RATE_LIMIT = 15;
 
-// Rate Limiter (NEW)
+// Setup
+const genAI = new GoogleGenerativeAI('YOUR_API_KEY'); // MOVE TO ENV VAR
+const globalRateLimiter = new RateLimiter(RATE_LIMIT);
+const userHistories = new Map();
+
+// Logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'bookgen.log' }),
+    new winston.transports.Console()
+  ]
+});
+
+// Ensure directories
+fs.mkdirSync(HISTORY_DIR, { recursive: true });
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+// Configure marked
+marked.setOptions({
+  headerIds: false,
+  breaks: true,
+  gfm: true,
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return code;
+  }
+});
+
+// NEW: Chapter structure definition
+const CHAPTER_STRUCTURE = [
+  { type: 'toc', title: 'Table of Contents' },
+  { type: 'chapter', number: 1, title: 'Introduction and Basics' },
+  { type: 'chapter', number: 2, title: 'Advanced Concepts' },
+  // ... you'll generate actual titles from TOC
+];
+
+// Classes
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -43,59 +84,22 @@ class RateLimiter {
   }
 }
 
-const globalRateLimiter = new RateLimiter(15);
-
-// Logger
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.File({ filename: 'bookgen.log' }),
-    new winston.transports.Console()
-  ]
-});
-
-// Ensure directories exist
-if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
-if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
-
-// Per-user conversation history
-const userHistories = new Map();
-
-// === Utilities ===
+// Utilities
 function getHistoryFile(userId) {
   return path.join(HISTORY_DIR, `history-${userId}.json`);
 }
 
 function loadConversationHistory(userId) {
-  const historyFile = getHistoryFile(userId);
   try {
-    return JSON.parse(fs.readFileSync(historyFile, 'utf8'));
+    return JSON.parse(fs.readFileSync(getHistoryFile(userId), 'utf8'));
   } catch {
-    logger.info(`No history found for user ${userId}. Starting fresh.`);
+    logger.info(`No history found for ${userId}. Starting fresh.`);
     return [];
   }
 }
 
 function saveConversationHistory(userId, history) {
-  const trimmed = trimHistory(history);
-  fs.writeFileSync(getHistoryFile(userId), JSON.stringify(trimmed, null, 2));
-  logger.info(`Saved history for user ${userId}`);
-}
-
-function trimHistory(messages) {
-  const tocMessage = messages.find(
-    (msg) => msg.role === "assistant" && msg.content.toLowerCase().includes("table of contents")
-  );
-  return tocMessage ? [{
-    role: "system",
-    content:
-      "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts. Table of Contents:\n\n" +
-      tocMessage.content,
-  }] : [];
+  fs.writeFileSync(getHistoryFile(userId), JSON.stringify(history, null, 2));
 }
 
 function saveToFile(filename, content) {
@@ -108,27 +112,54 @@ function deleteFile(filePath) {
     fs.unlinkSync(filePath);
     logger.info(`Deleted: ${filePath}`);
   } catch (err) {
-    logger.error(`Error deleting ${filePath}: ${err.message}`);
+    logger.error(`Error deleting: ${err.message}`);
   }
 }
 
-function combineChapters(files) {
-  let combined = '';
-  for (const file of files) {
-    combined += fs.readFileSync(file, 'utf8') + '\n\n';
-  }
-  fs.writeFileSync(path.join(OUTPUT_DIR, COMBINED_FILE), combined);
-  return combined;
+// NEW: Clean up AI output more aggressively
+function cleanUpAIText(text) {
+  return text
+    .replace(/^(?:[-=_~\s]{5,})$/gm, "") // Remove separator lines
+    .replace(/\n{3,}/g, "\n\n") // Normalize spacing
+    .replace(/\n\s*$/g, "") // Trailing whitespace
+    .replace(/[\u2013\u2014]/g, "-") // Fix dashes
+    .replace(/^Hello there.*I'm Hailu.*$/gim, "") // REMOVE DUPLICATE INTROS
+    .replace(/^Chapter \d+:.*$/gm, "") // REMOVE INLINE CHAPTER HEADERS
+    .replace(/^#\s+\d+\.\s+/gm, "# ") // Fix numbered headings
+    .trim();
 }
 
-// === AI === (CHANGED - Google AI instead of Together)
-async function askAI(prompt, userId, bookTopic) {
-  await globalRateLimiter.wait(); // Rate limit
+// NEW: Extract chapter titles from TOC
+function parseTOC(tocContent) {
+  const chapters = [];
+  const lines = tocContent.split('\n');
+  
+  for (const line of lines) {
+    const match = line.match(/^\d+\.\s+(.+?)(?:\:|$)/i);
+    if (match) {
+      chapters.push(match[1].trim());
+    }
+  }
+  
+  // If no titles found, use defaults
+  return chapters.length > 0 ? chapters : [
+    'Introduction',
+    'Core Concepts',
+    'Practical Applications',
+    'Advanced Topics',
+    'Case Studies',
+    'Troubleshooting',
+    'Tools and Resources',
+    'Best Practices',
+    'Future Trends',
+    'Conclusion'
+  ];
+}
 
-  const history = userHistories.get(userId) || [];
-  const trimmedHistory = trimHistory(history);
-
-  // Convert to Google AI format
+// AI Interaction
+async function askAI(prompt, userId, bookTopic, options = {}) {
+  await globalRateLimiter.wait();
+  
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
     generationConfig: {
@@ -138,220 +169,188 @@ async function askAI(prompt, userId, bookTopic) {
     },
   });
 
-  const chat = model.startChat({
-    history: trimmedHistory.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    })),
-  });
-
   try {
-    const result = await chat.sendMessage(prompt);
+    const result = await model.generateContent(prompt);
     let reply = result.response.text();
-
-    // Relevance check
-    const topicWords = bookTopic.toLowerCase().split(/\s+/);
-    const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
-
-    if (!isRelevant) {
-      logger.warn(`🛑 Irrelevant output detected for [${userId}]: ${reply.slice(0, 80)}...`);
-      throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
+    
+    // Validate response
+    if (!reply || reply.trim().length < 100) {
+      throw new Error('Response too short or empty');
     }
 
-    // Save history
-    history.push({ role: 'user', content: prompt });
-    history.push({ role: 'assistant', content: reply });
-    userHistories.set(userId, history);
-    saveConversationHistory(userId, history);
+    // Save history if needed
+    if (options.saveToHistory) {
+      const history = userHistories.get(userId) || [];
+      history.push({ role: 'user', content: prompt });
+      history.push({ role: 'assistant', content: reply });
+      userHistories.set(userId, history);
+      saveConversationHistory(userId, history);
+    }
 
-    logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
+    logger.info(`✅ Valid response for [${userId}]: ${reply.slice(0, 50)}...`);
     return reply;
 
   } catch (error) {
-    logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
+    logger.error(`❌ AI request failed for [${userId}]: ${error.message}`);
     throw error;
   }
 }
 
-// === Chapter ===
-async function generateChapter(prompt, chapterNum, userId, bookTopic) {
-  const history = userHistories.get(userId) || [];
-  const toc = history.find(
-    (msg) => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents')
-  );
-
-  const modifiedPrompt = toc
-    ? `${prompt}\n\nRefer to this Table of Contents:\n\n${toc.content}`
-    : prompt;
-
-  const chapterText = await askAI(modifiedPrompt, userId, bookTopic);
-  const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
-  saveToFile(filename, chapterText);
-  return filename;
+// NEW: Generate TOC first, then chapters
+async function generateTOC(bookTopic, userId) {
+  const prompt = `As Hailu, create a detailed table of contents for a beginner's book about "${bookTopic}". 
+  Requirements:
+  - Exactly 10 chapters
+  - Each chapter must have a clear, descriptive title (no generic "Chapter 1")
+  - Include 3-4 subtopics per chapter
+  - Format as a SIMPLE numbered list
+  - Focus ONLY on ${bookTopic}
+  - NO introduction, NO fluff, just the TOC
+  
+  Example format:
+  1. What Are Cats? A Furry Introduction
+  2. Super Senses: How Cats See, Hear, and Smell
+  3. [and so on...]`;
+  
+  const toc = await askAI(prompt, userId, bookTopic, { saveToHistory: true });
+  return cleanUpAIText(toc);
 }
 
-// === Formatter ===
+// NEW: Generate single chapter
+async function generateChapter(bookTopic, chapterNumber, chapterTitle, userId) {
+  const prompt = `As Hailu, write Chapter ${chapterNumber}: "${chapterTitle}" for a beginner's book about "${bookTopic}".
+  
+  IMPORTANT: DO NOT write any introduction about yourself. DO NOT include chapter numbers in your content. Just write the actual content.
+  
+  Requirements:
+  - Minimum 400 words
+  - Fun, simple tone (explain to a curious 16-year-old)
+  - Include 1-2 analogies
+  - Include 1 practical example
+  - Use clear markdown headings (## for subsections)
+  - Describe one diagram or table that would help understanding
+  - Focus ONLY on "${chapterTitle}" - no other chapters
+  - End with a brief summary
+  
+  Book topic: ${bookTopic}
+  Chapter title: ${chapterTitle}`;
+  
+  const content = await askAI(prompt, userId, bookTopic);
+  return cleanUpAIText(content);
+}
+
+// NEW: Generate conclusion
+async function generateConclusion(bookTopic, chapterTitles, userId) {
+  const prompt = `As Hailu, write a conclusion for a book about "${bookTopic}".
+  
+  Requirements:
+  - 200-300 words
+  - Summarize key ideas from: ${chapterTitles.join(', ')}
+  - Inspire reader to learn more
+  - Friendly, simple tone
+  - Include "References" section with 3-5 beginner-friendly resources
+  - Do NOT write any introduction about yourself`;
+  
+  const conclusion = await askAI(prompt, userId, bookTopic);
+  return cleanUpAIText(conclusion);
+}
+
+// Content processing
 function formatMath(content) {
-  const links = [];
-  content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    links.push(`<a href="${url}" target="_blank">${text}</a>`);
-    return `__LINK__${links.length - 1}__`;
-  });
-
-  content = content
-    .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
-    .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
-    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `\\(${base}^{${exp}}\\)`)
-    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`);
-
-  content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
-  return content;
+  // Keep existing math formatting but make it safer
+  return content
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
+    .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
+    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
+    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 }
 
-function cleanUpAIText(text) {
-  return text
-    .replace(/^(?:[-=_~\s]{5,})$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\n\s*$/g, "")
-    .replace(/[\u2013\u2014]/g, "-")
-    .trim();
+// NEW: Build HTML with proper chapter separation
+function buildHTML(content, bookTitle) {
+  const processed = formatMath(content);
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${bookTitle}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\\\(', '\\\\)']] },
+      svg: { fontCache: 'none', scale: 0.95 }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+  <style>
+    @page { margin: 90px 70px 80px 70px; size: A4; }
+    .cover-page { page: cover; }
+    @page cover { margin: 0; }
+    body { font-family: 'Merriweather', serif; line-height: 1.8; hyphens: auto; }
+    .cover-page { /* ... styles ... */ }
+    .chapter-break { page-break-before: always; }
+    h1, h2, h3 { font-family: 'Inter', sans-serif; }
+    h1 { font-size: 28px; border-bottom: 3px solid #667eea; }
+    h2 { font-size: 22px; color: #4b5563; }
+    pre { background: #1f2937; padding: 20px; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin: 2em 0; }
+    th, td { padding: 12px; border: 1px solid #e5e7eb; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .disclaimer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; }
+  </style>
+</head>
+<body>
+  <div class="cover-page">
+    <h1>${bookTitle}</h1>
+    <p>Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</p>
+  </div>
+  ${marked.parse(processed)}
+  <div class="disclaimer">
+    <p>This book was generated by AI for educational purposes. Please verify all information independently.</p>
+  </div>
+</body>
+</html>`;
 }
 
-// === PDF Generation (UNCHANGED - using Nutrient) ===
-async function generatePDF(content, outputPath) {
-  const cleaned = cleanUpAIText(content);
-  const formattedContent = formatMath(cleaned);
-
-  const titleMatch = cleaned.match(/^#\s+(.+)$/m);
-  const bookTitle = titleMatch ? titleMatch[1] : 'AI Generated Book';
-
-  const enhancedHtml = `
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${bookTitle} - Bookgen.ai</title>
-      <link rel="preconnect" href="https://fonts.googleapis.com">
-      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-      <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-      <script>
-      window.MathJax = {
-        tex: {
-          inlineMath: [['\\\\(', '\\\\)']],
-          displayMath: [['$$', '$$']],
-        },
-        svg: { fontCache: 'none', scale: 0.95 }
-      };
-      </script>
-      <script type="text/javascript" id="MathJax-script" async
-        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
-      </script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
-      <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-      <style>
-        @page { margin: 90px 70px 80px 70px; size: A4; }
-        .cover-page { page: cover; }
-        @page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
-        body { font-family: 'Merriweather', Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; background: white; margin: 0; padding: 0; text-align: justify; hyphens: auto; }
-        .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
-        .cover-title { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 700; margin-bottom: 0.3em; line-height: 1.2; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
-        .cover-subtitle { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 300; margin-bottom: 2em; opacity: 0.9; }
-        .cover-meta { position: absolute; bottom: 60px; font-size: 14px; font-weight: 300; opacity: 0.8; }
-        .cover-disclaimer { margin-top: 30px; font-size: 12px; color: #fecaca; font-style: italic; }
-        h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; }
-        h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
-        h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
-        h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
-        h3 { font-size: 18px; color: #6b7280; }
-        .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
-        code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
-        pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); }
-        pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
-        blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
-        blockquote::before { content: """; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
-        .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
-        .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
-        table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
-        th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
-        td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
-        tr:nth-child(even) { background: #f9fafb; }
-        .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
-        .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="cover-page">
-        <div class="cover-content">
-          <h1 class="cover-title">${bookTitle}</h1>
-          <h2 class="cover-subtitle">A Beginner's Guide</h2>
-          <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
-        </div>
-        <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
-      </div>
-      <div class="chapter-content">${marked.parse(formattedContent)}</div>
-      <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
-      <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
-    </body>
-  </html>
-  `;
-
+// PDF Generation
+async function generatePDF(content, outputPath, bookTitle) {
   try {
-    const apiKey = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
+    const html = buildHTML(content, bookTitle);
     
     const formData = new FormData();
-    const instructions = {
-      parts: [{ html: "index.html" }],
-      output: {
-        format: "pdf",
-        pdf: {
-          margin: {
-            top: "90px",
-            bottom: "80px",
-            left: "70px",
-            right: "70px"
-          },
-          header: {
-            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
-            spacing: "5mm"
-          },
-          footer: {
-            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
-            spacing: "5mm"
-          },
-          waitDelay: 3000,
-          printBackground: true,
-          preferCSSPageSize: true
-        }
-      }
-    };
-    
-    formData.append('instructions', JSON.stringify(instructions));
-    formData.append('index.html', Buffer.from(enhancedHtml), {
+    formData.append('index.html', Buffer.from(html), {
       filename: 'index.html',
       contentType: 'text/html'
     });
+    
+    formData.append('instructions', JSON.stringify({
+      parts: [{ html: 'index.html' }],
+      output: {
+        format: 'pdf',
+        pdf: {
+          margin: { top: '90px', bottom: '80px', left: '70px', right: '70px' },
+          waitDelay: 3000,
+          printBackground: true
+        }
+      }
+    }));
 
     const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      },
+      headers: { 'Authorization': `Bearer ${process.env.NUTRIENT_API_KEY}` },
       body: formData
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
+      throw new Error(`API error: ${response.status} - ${await response.text()}`);
     }
 
-    const pdfBuffer = await response.buffer();
-    fs.writeFileSync(outputPath, pdfBuffer);
-    logger.info(`✅ Generated premium PDF: ${outputPath}`);
+    fs.writeFileSync(outputPath, await response.buffer());
+    logger.info(`✅ PDF generated: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
@@ -360,115 +359,606 @@ async function generatePDF(content, outputPath) {
   }
 }
 
-// === Prompt Generator ===
-function generatePrompts(bookTopic) {
-  return [
-    `As Hailu, you are going to follow this instruction that i will gave you. You must work with them for best out put. First write the title for the book then create a table of contents for a book about "${bookTopic}" for someone with no prior knowledge. The book must have 10 chapters, each covering a unique aspect of ${bookTopic} (e.g., for trading bots: what they are, how they work, strategies, risks, tools). Each chapter must be at least 400 words and written in a fun, simple, friendly tone, like explaining to a curious 16-year-old. Use clear, descriptive chapter titles and include more than 2–3 subtopics per chapter (e.g., "What is a trading bot?" or "How do trading bots make decisions?"). Output only the table of contents as a numbered list with chapter titles and subtopics. Ensure topics are distinct, avoid overlap, and focus strictly on ${bookTopic}. If ${bookTopic} is unclear, suggest relevant subtopics and explain why. Ignore any unrelated topics like space or previous requests. Remeber After you finish what you have been told you are goinig to stop after you finish creating the table of content you are done don't respond any more.`,
-
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 1 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the first chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter one from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter one after you are done writting chapter one stop responding.`,
-
-    `As Hailu,you are going to follow this instruction that i will gave you. Now you write Chapter 2 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the second chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter two from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter two after you are done writting chapter two stop responding.`,
-
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 3 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the third chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter three from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter three after you are done writting chapter three stop responding.`,
-    
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 4 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fourth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter four from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter four after you are done writting chapter four stop responding.`,
-    
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 5 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fifith chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter five from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter five after you are done writting chapter five stop responding.`,
-    
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 6 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the sixth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter six from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter six after you are done writting chapter six stop responding.`,    
-
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 7 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the seventh chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter seven from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter seven after you are done writting chapter seven stop responding.`,
-    
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 8 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the eightth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter eight from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter eight after you are done writting chapter eight stop responding.`,
-
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 9 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the nineth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter nine from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter nine after you are done writting chapter nine stop responding.`,
-    
-    `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 10 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the tenth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter ten from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter ten after you are done writting chapter ten stop responding.`,
-    
-    `As Hailu, write the conclusion and references for the book about "${bookTopic}", based on the table of contents and chapters you created. Use a fun, simple, friendly tone, like explaining to a curious 19-year-old. In the conclusion (200–300 words), summarize the key ideas from all chapters and inspire the reader to learn more about ${bookTopic}. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., for trading bots: Investopedia, Python libraries, or educational videos) with a 1–2 sentence description each. Use clear headings ("Conclusion" and "References"). Avoid copyrighted material, ensure resources are accessible and appropriate for beginners, and focus only on ${bookTopic}. If resources are limited, suggest general learning platforms and explain why. Do not include the table of contents, chapter content, or unrelated topics like space.`
-  ];
-}
-
-// === Task Queue ===
-const bookQueue = async.queue(async (task, callback) => {
-  try {
-    const { bookTopic, userId } = task;
-    await generateBookMedd(bookTopic, userId);
-    callback();
-  } catch (error) {
-    callback(error);
-  }
-}, 1); // Process one book at a time
-
-// === Master Function ===
-export async function generateBookMedd(bookTopic, userId) {
+// Main generation function
+export async function generateBookMedd(rawTopic, userId) {
+  const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`;
-  logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
+  
+  logger.info(`Starting: ${bookTopic} for ${safeUserId}`);
 
   try {
-    global.cancelFlags = global.cancelFlags || {};
-
-    userHistories.set(safeUserId, [{
-      role: "system",
-      content:
-        "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts."
-    }]);
-
-    const prompts = generatePrompts(bookTopic);
-    const chapterFiles = [];
-
-    // Generate chapters with delays
-    for (let i = 0; i < prompts.length; i++) {
+    // Clear previous history
+    userHistories.delete(safeUserId);
+    
+    // 1. Generate TOC
+    logger.info('Generating TOC...');
+    const tocContent = await generateTOC(bookTopic, safeUserId);
+    const chapterTitles = parseTOC(tocContent);
+    
+    // Save TOC
+    const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
+    saveToFile(tocFile, `# Table of Contents\n\n${tocContent}\n`);
+    
+    const chapterFiles = [tocFile];
+    
+    // 2. Generate chapters
+    for (let i = 0; i < chapterTitles.length; i++) {
       if (global.cancelFlags?.[userId]) {
         delete global.cancelFlags[userId];
-        logger.warn(`❌ Book generation cancelled for user: ${userId}`);
         throw new Error('Generation cancelled');
       }
 
       const chapterNum = i + 1;
-      logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
-      const file = await generateChapter(prompts[i], chapterNum, safeUserId, bookTopic);
-      chapterFiles.push(file);
-
-      // Add delay between requests (4 seconds = 15 req/min max)
-      if (i < prompts.length - 1) {
-        logger.info(`Rate limit delay: 4 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 6000));
+      const title = chapterTitles[i];
+      
+      logger.info(`Generating Chapter ${chapterNum}: ${title}`);
+      
+      const chapterContent = await generateChapter(bookTopic, chapterNum, title, safeUserId);
+      
+      // Add page break before chapter
+      const separatedContent = `\n<div class="chapter-break"></div>\n\n# Chapter ${chapterNum}: ${title}\n\n${chapterContent}\n\n---\n`;
+      
+      const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chapterNum}.txt`);
+      saveToFile(filename, separatedContent);
+      chapterFiles.push(filename);
+      
+      // Rate limit delay
+      if (i < chapterTitles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 4000));
       }
     }
-
-    const combinedContent = combineChapters(chapterFiles);
-
-    const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
-    const fileName = `output_${safeUserId}_${safeTopic}.pdf`;
-    const outputPath = path.join(OUTPUT_DIR, fileName);
-    await generatePDF(combinedContent, outputPath);
-
+    
+    // 3. Generate conclusion
+    logger.info('Generating conclusion...');
+    const conclusion = await generateConclusion(bookTopic, chapterTitles, safeUserId);
+    const conclusionFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
+    saveToFile(conclusionFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
+    chapterFiles.push(conclusionFile);
+    
+    // 4. Combine all content
+    const combinedContent = chapterFiles.map(file => {
+      return fs.readFileSync(file, 'utf8');
+    }).join('\n');
+    
+    // 5. Generate PDF
+    const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, '_');
+    const outputPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeTopic}.pdf`);
+    
+    await generatePDF(combinedContent, outputPath, bookTopic);
+    
+    // 6. Cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
-
-    logger.info(`Book generation complete. Output: ${outputPath}`);
+    
+    logger.info(`✅ Book complete: ${outputPath}`);
     return outputPath;
 
   } catch (error) {
-    logger.error(`Book generation failed for ${safeUserId}: ${error.message}`);
+    logger.error(`❌ Book generation failed: ${error.message}`);
     throw error;
   }
 }
 
-// === API Wrapper ===
+// Queue wrapper (unchanged)
+const bookQueue = async.queue(async (task, callback) => {
+  try {
+    const result = await generateBookMedd(task.bookTopic, task.userId);
+    callback(null, result);
+  } catch (error) {
+    callback(error);
+  }
+}, 1);
+
 export function queueBookGeneration(bookTopic, userId) {
   return new Promise((resolve, reject) => {
     bookQueue.push({ bookTopic, userId }, (error, result) => {
-      if (error) {
-        logger.error(`Queue failed for ${userId}: ${error.message}`);
-        reject(error);
-      } else {
-        resolve(result);
-      }
+      if (error) reject(error);
+      else resolve(result);
     });
   });
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// import { GoogleGenerativeAI } from '@google/generative-ai';
+// import { marked } from 'marked';
+// import hljs from 'highlight.js';
+// import fs from 'fs';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
+// import { dirname } from 'path';
+// import async from 'async';
+// import winston from 'winston';
+// import fetch from 'node-fetch';
+// import FormData from 'form-data';
+
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = dirname(__filename);
+
+// // Constants
+// const HISTORY_DIR = path.join(__dirname, 'history');
+// const CHAPTER_PREFIX = 'chapter';
+// const OUTPUT_DIR = path.join(__dirname, '../pdfs');
+// const COMBINED_FILE = 'combined-chapters.txt';
+
+// // Google AI Setup (CHANGED)
+// const genAI = new GoogleGenerativeAI('AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo');
+// const MODEL_NAME = 'gemini-2.5-flash';
+
+// // Rate Limiter (NEW)
+// class RateLimiter {
+//   constructor(requestsPerMinute) {
+//     this.requestsPerMinute = requestsPerMinute;
+//     this.requests = [];
+//   }
+
+//   async wait() {
+//     const now = Date.now();
+//     this.requests = this.requests.filter(time => now - time < 60000);
+//     if (this.requests.length >= this.requestsPerMinute) {
+//       const oldest = this.requests[0];
+//       const waitTime = 60000 - (now - oldest) + 1000;
+//       await new Promise(resolve => setTimeout(resolve, waitTime));
+//       return this.wait();
+//     }
+//     this.requests.push(now);
+//   }
+// }
+
+// const globalRateLimiter = new RateLimiter(15);
+
+// // Logger
+// const logger = winston.createLogger({
+//   level: 'info',
+//   format: winston.format.combine(
+//     winston.format.timestamp(),
+//     winston.format.json()
+//   ),
+//   transports: [
+//     new winston.transports.File({ filename: 'bookgen.log' }),
+//     new winston.transports.Console()
+//   ]
+// });
+
+// // Ensure directories exist
+// if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
+// if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
+
+// // Per-user conversation history
+// const userHistories = new Map();
+
+// // === Utilities ===
+// function getHistoryFile(userId) {
+//   return path.join(HISTORY_DIR, `history-${userId}.json`);
+// }
+
+// function loadConversationHistory(userId) {
+//   const historyFile = getHistoryFile(userId);
+//   try {
+//     return JSON.parse(fs.readFileSync(historyFile, 'utf8'));
+//   } catch {
+//     logger.info(`No history found for user ${userId}. Starting fresh.`);
+//     return [];
+//   }
+// }
+
+// function saveConversationHistory(userId, history) {
+//   const trimmed = trimHistory(history);
+//   fs.writeFileSync(getHistoryFile(userId), JSON.stringify(trimmed, null, 2));
+//   logger.info(`Saved history for user ${userId}`);
+// }
+
+// function trimHistory(messages) {
+//   const tocMessage = messages.find(
+//     (msg) => msg.role === "assistant" && msg.content.toLowerCase().includes("table of contents")
+//   );
+//   return tocMessage ? [{
+//     role: "system",
+//     content:
+//       "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts. Table of Contents:\n\n" +
+//       tocMessage.content,
+//   }] : [];
+// }
+
+// function saveToFile(filename, content) {
+//   fs.writeFileSync(filename, content);
+//   logger.info(`Saved: ${filename}`);
+// }
+
+// function deleteFile(filePath) {
+//   try {
+//     fs.unlinkSync(filePath);
+//     logger.info(`Deleted: ${filePath}`);
+//   } catch (err) {
+//     logger.error(`Error deleting ${filePath}: ${err.message}`);
+//   }
+// }
+
+// function combineChapters(files) {
+//   let combined = '';
+//   for (const file of files) {
+//     combined += fs.readFileSync(file, 'utf8') + '\n\n';
+//   }
+//   fs.writeFileSync(path.join(OUTPUT_DIR, COMBINED_FILE), combined);
+//   return combined;
+// }
+
+// // === AI === (CHANGED - Google AI instead of Together)
+// async function askAI(prompt, userId, bookTopic) {
+//   await globalRateLimiter.wait(); // Rate limit
+
+//   const history = userHistories.get(userId) || [];
+//   const trimmedHistory = trimHistory(history);
+
+//   // Convert to Google AI format
+//   const model = genAI.getGenerativeModel({
+//     model: MODEL_NAME,
+//     generationConfig: {
+//       maxOutputTokens: 4000,
+//       temperature: 0.6,
+//       topP: 0.9,
+//     },
+//   });
+
+//   const chat = model.startChat({
+//     history: trimmedHistory.map(msg => ({
+//       role: msg.role === 'assistant' ? 'model' : 'user',
+//       parts: [{ text: msg.content }]
+//     })),
+//   });
+
+//   try {
+//     const result = await chat.sendMessage(prompt);
+//     let reply = result.response.text();
+
+//     // Relevance check
+//     const topicWords = bookTopic.toLowerCase().split(/\s+/);
+//     const isRelevant = topicWords.some(word => reply.toLowerCase().includes(word));
+
+//     if (!isRelevant) {
+//       logger.warn(`🛑 Irrelevant output detected for [${userId}]: ${reply.slice(0, 80)}...`);
+//       throw new Error(`Output does not appear relevant to topic: "${bookTopic}"`);
+//     }
+
+//     // Save history
+//     history.push({ role: 'user', content: prompt });
+//     history.push({ role: 'assistant', content: reply });
+//     userHistories.set(userId, history);
+//     saveConversationHistory(userId, history);
+
+//     logger.info(`✅ Valid AI response saved for [${userId}] on topic "${bookTopic}"`);
+//     return reply;
+
+//   } catch (error) {
+//     logger.error(`❌ AI request failed for [${userId}] on topic "${bookTopic}": ${error.message}`);
+//     throw error;
+//   }
+// }
+
+// // === Chapter ===
+// async function generateChapter(prompt, chapterNum, userId, bookTopic) {
+//   const history = userHistories.get(userId) || [];
+//   const toc = history.find(
+//     (msg) => msg.role === 'assistant' && msg.content.toLowerCase().includes('table of contents')
+//   );
+
+//   const modifiedPrompt = toc
+//     ? `${prompt}\n\nRefer to this Table of Contents:\n\n${toc.content}`
+//     : prompt;
+
+//   const chapterText = await askAI(modifiedPrompt, userId, bookTopic);
+//   const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${userId}-${chapterNum}.txt`);
+//   saveToFile(filename, chapterText);
+//   return filename;
+// }
+
+// // === Formatter ===
+// function formatMath(content) {
+//   const links = [];
+//   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+//     links.push(`<a href="${url}" target="_blank">${text}</a>`);
+//     return `__LINK__${links.length - 1}__`;
+//   });
+
+//   content = content
+//     .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
+//     .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
+//     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `\\(${base}^{${exp}}\\)`)
+//     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`);
+
+//   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
+//   return content;
+// }
+
+// function cleanUpAIText(text) {
+//   return text
+//     .replace(/^(?:[-=_~\s]{5,})$/gm, "")
+//     .replace(/\n{3,}/g, "\n\n")
+//     .replace(/\n\s*$/g, "")
+//     .replace(/[\u2013\u2014]/g, "-")
+//     .trim();
+// }
+
+// // === PDF Generation (UNCHANGED - using Nutrient) ===
+// async function generatePDF(content, outputPath) {
+//   const cleaned = cleanUpAIText(content);
+//   const formattedContent = formatMath(cleaned);
+
+//   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
+//   const bookTitle = titleMatch ? titleMatch[1] : 'AI Generated Book';
+
+//   const enhancedHtml = `
+//   <!DOCTYPE html>
+//   <html lang="en">
+//     <head>
+//       <meta charset="utf-8">
+//       <meta name="viewport" content="width=device-width, initial-scale=1.0">
+//       <title>${bookTitle} - Bookgen.ai</title>
+//       <link rel="preconnect" href="https://fonts.googleapis.com">
+//       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+//       <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+//       <script>
+//       window.MathJax = {
+//         tex: {
+//           inlineMath: [['\\\\(', '\\\\)']],
+//           displayMath: [['$$', '$$']],
+//         },
+//         svg: { fontCache: 'none', scale: 0.95 }
+//       };
+//       </script>
+//       <script type="text/javascript" id="MathJax-script" async
+//         src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+//       </script>
+//       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+//       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+//       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+//       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
+//       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
+//       <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+//       <style>
+//         @page { margin: 90px 70px 80px 70px; size: A4; }
+//         .cover-page { page: cover; }
+//         @page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
+//         body { font-family: 'Merriweather', Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; background: white; margin: 0; padding: 0; text-align: justify; hyphens: auto; }
+//         .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
+//         .cover-title { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 700; margin-bottom: 0.3em; line-height: 1.2; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
+//         .cover-subtitle { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 300; margin-bottom: 2em; opacity: 0.9; }
+//         .cover-meta { position: absolute; bottom: 60px; font-size: 14px; font-weight: 300; opacity: 0.8; }
+//         .cover-disclaimer { margin-top: 30px; font-size: 12px; color: #fecaca; font-style: italic; }
+//         h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; }
+//         h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
+//         h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
+//         h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
+//         h3 { font-size: 18px; color: #6b7280; }
+//         .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
+//         code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
+//         pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); }
+//         pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
+//         blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
+//         blockquote::before { content: """; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
+//         .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
+//         .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
+//         table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+//         th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
+//         td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
+//         tr:nth-child(even) { background: #f9fafb; }
+//         .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
+//         .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
+//       </style>
+//     </head>
+//     <body>
+//       <div class="cover-page">
+//         <div class="cover-content">
+//           <h1 class="cover-title">${bookTitle}</h1>
+//           <h2 class="cover-subtitle">A Beginner's Guide</h2>
+//           <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
+//         </div>
+//         <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
+//       </div>
+//       <div class="chapter-content">${marked.parse(formattedContent)}</div>
+//       <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
+//       <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
+//     </body>
+//   </html>
+//   `;
+
+//   try {
+//     const apiKey = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
+    
+//     const formData = new FormData();
+//     const instructions = {
+//       parts: [{ html: "index.html" }],
+//       output: {
+//         format: "pdf",
+//         pdf: {
+//           margin: {
+//             top: "90px",
+//             bottom: "80px",
+//             left: "70px",
+//             right: "70px"
+//           },
+//           header: {
+//             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
+//             spacing: "5mm"
+//           },
+//           footer: {
+//             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
+//             spacing: "5mm"
+//           },
+//           waitDelay: 3000,
+//           printBackground: true,
+//           preferCSSPageSize: true
+//         }
+//       }
+//     };
+    
+//     formData.append('instructions', JSON.stringify(instructions));
+//     formData.append('index.html', Buffer.from(enhancedHtml), {
+//       filename: 'index.html',
+//       contentType: 'text/html'
+//     });
+
+//     const response = await fetch('https://api.nutrient.io/build', {
+//       method: 'POST',
+//       headers: {
+//         'Authorization': `Bearer ${apiKey}`
+//       },
+//       body: formData
+//     });
+
+//     if (!response.ok) {
+//       const errorText = await response.text();
+//       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
+//     }
+
+//     const pdfBuffer = await response.buffer();
+//     fs.writeFileSync(outputPath, pdfBuffer);
+//     logger.info(`✅ Generated premium PDF: ${outputPath}`);
+//     return outputPath;
+
+//   } catch (error) {
+//     logger.error(`❌ PDF generation failed: ${error.message}`);
+//     throw error;
+//   }
+// }
+
+// // === Prompt Generator ===
+// function generatePrompts(bookTopic) {
+//   return [
+//     `As Hailu, you are going to follow this instruction that i will gave you. You must work with them for best out put. First write the title for the book then create a table of contents for a book about "${bookTopic}" for someone with no prior knowledge. The book must have 10 chapters, each covering a unique aspect of ${bookTopic} (e.g., for trading bots: what they are, how they work, strategies, risks, tools). Each chapter must be at least 400 words and written in a fun, simple, friendly tone, like explaining to a curious 16-year-old. Use clear, descriptive chapter titles and include more than 2–3 subtopics per chapter (e.g., "What is a trading bot?" or "How do trading bots make decisions?"). Output only the table of contents as a numbered list with chapter titles and subtopics. Ensure topics are distinct, avoid overlap, and focus strictly on ${bookTopic}. If ${bookTopic} is unclear, suggest relevant subtopics and explain why. Ignore any unrelated topics like space or previous requests. Remeber After you finish what you have been told you are goinig to stop after you finish creating the table of content you are done don't respond any more.`,
+
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 1 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the first chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter one from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter one after you are done writting chapter one stop responding.`,
+
+//     `As Hailu,you are going to follow this instruction that i will gave you. Now you write Chapter 2 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the second chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter two from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter two after you are done writting chapter two stop responding.`,
+
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 3 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the third chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter three from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter three after you are done writting chapter three stop responding.`,
+    
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 4 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fourth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter four from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter four after you are done writting chapter four stop responding.`,
+    
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 5 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the fifith chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter five from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter five after you are done writting chapter five stop responding.`,
+    
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 6 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the sixth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter six from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter six after you are done writting chapter six stop responding.`,    
+
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 7 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the seventh chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter seven from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter seven after you are done writting chapter seven stop responding.`,
+    
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 8 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the eightth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter eight from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter eight after you are done writting chapter eight stop responding.`,
+
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 9 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the nineth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter nine from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter nine after you are done writting chapter nine stop responding.`,
+    
+//     `As Hailu,you are going to follow this instruction that i will gave you. You write Chapter 10 of the book about "${bookTopic}", based on the table of contents you created. Focus only on the tenth chapter's topic and subtopics. Use a fun, simple, friendly tone, like explaining to a curious 16-year-old. Break down complex ideas into clear steps with vivid examples (e.g., for trading bots, compare them to a robot chef following a recipe) and if it seem important use one analogy per subtopic. Include a description of a diagram or table (e.g., "a diagram showing how a trading bot works") to aid understanding. Use clear headings for each subtopic. Write at least 400 words, avoid copyrighted material, ensure accuracy, and focus only on ${bookTopic} chapter ten from the table of content. If information is limited, explain in simple terms and note limitations. Do not include the table of contents, other chapters, or unrelated topics like space please only write chapter ten after you are done writting chapter ten stop responding.`,
+    
+//     `As Hailu, write the conclusion and references for the book about "${bookTopic}", based on the table of contents and chapters you created. Use a fun, simple, friendly tone, like explaining to a curious 19-year-old. In the conclusion (200–300 words), summarize the key ideas from all chapters and inspire the reader to learn more about ${bookTopic}. In the references section, provide 3–5 reliable, beginner-friendly resources (e.g., for trading bots: Investopedia, Python libraries, or educational videos) with a 1–2 sentence description each. Use clear headings ("Conclusion" and "References"). Avoid copyrighted material, ensure resources are accessible and appropriate for beginners, and focus only on ${bookTopic}. If resources are limited, suggest general learning platforms and explain why. Do not include the table of contents, chapter content, or unrelated topics like space.`
+//   ];
+// }
+
+// // === Task Queue ===
+// const bookQueue = async.queue(async (task, callback) => {
+//   try {
+//     const { bookTopic, userId } = task;
+//     await generateBookMedd(bookTopic, userId);
+//     callback();
+//   } catch (error) {
+//     callback(error);
+//   }
+// }, 1); // Process one book at a time
+
+// // === Master Function ===
+// export async function generateBookMedd(bookTopic, userId) {
+//   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`;
+//   logger.info(`Starting book generation for user: ${safeUserId}, topic: ${bookTopic}`);
+
+//   try {
+//     global.cancelFlags = global.cancelFlags || {};
+
+//     userHistories.set(safeUserId, [{
+//       role: "system",
+//       content:
+//         "Your name is Hailu. You are a kind, smart teacher explaining to a curious person. Use simple, clear words, break down complex ideas step-by-step, and include human-like examples. Always start with a table of contents, then write chapters. Focus only on the requested topic, ignore unrelated contexts."
+//     }]);
+
+//     const prompts = generatePrompts(bookTopic);
+//     const chapterFiles = [];
+
+//     // Generate chapters with delays
+//     for (let i = 0; i < prompts.length; i++) {
+//       if (global.cancelFlags?.[userId]) {
+//         delete global.cancelFlags[userId];
+//         logger.warn(`❌ Book generation cancelled for user: ${userId}`);
+//         throw new Error('Generation cancelled');
+//       }
+
+//       const chapterNum = i + 1;
+//       logger.info(`Generating Chapter ${chapterNum} for ${bookTopic}`);
+//       const file = await generateChapter(prompts[i], chapterNum, safeUserId, bookTopic);
+//       chapterFiles.push(file);
+
+//       // Add delay between requests (4 seconds = 15 req/min max)
+//       if (i < prompts.length - 1) {
+//         logger.info(`Rate limit delay: 4 seconds...`);
+//         await new Promise(resolve => setTimeout(resolve, 6000));
+//       }
+//     }
+
+//     const combinedContent = combineChapters(chapterFiles);
+
+//     const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, "_");
+//     const fileName = `output_${safeUserId}_${safeTopic}.pdf`;
+//     const outputPath = path.join(OUTPUT_DIR, fileName);
+//     await generatePDF(combinedContent, outputPath);
+
+//     chapterFiles.forEach(deleteFile);
+//     userHistories.delete(safeUserId);
+
+//     logger.info(`Book generation complete. Output: ${outputPath}`);
+//     return outputPath;
+
+//   } catch (error) {
+//     logger.error(`Book generation failed for ${safeUserId}: ${error.message}`);
+//     throw error;
+//   }
+// }
+
+// // === API Wrapper ===
+// export function queueBookGeneration(bookTopic, userId) {
+//   return new Promise((resolve, reject) => {
+//     bookQueue.push({ bookTopic, userId }, (error, result) => {
+//       if (error) {
+//         logger.error(`Queue failed for ${userId}: ${error.message}`);
+//         reject(error);
+//       } else {
+//         resolve(result);
+//       }
+//     });
+//   });
+// }
 
 
 
