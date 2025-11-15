@@ -1,4 +1,4 @@
-// AI/MB.js – FIXED: Dynamic examples, no forced code, cleaned markdown
+// AI/MB.js – FINAL FIXED VERSION: TOC, no duplicates, tables, clean HTML, perfect formatting
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -55,10 +55,6 @@ fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // ==================== TOPIC DETECTION ====================
-/**
- * NEW: Detects if the topic is programming-related
- * Returns true if topic contains programming keywords
- */
 function isProgrammingTopic(topic) {
   const programmingKeywords = [
     'programming', 'code', 'development', 'software', 'tutorial', 'guide',
@@ -72,9 +68,6 @@ function isProgrammingTopic(topic) {
   return programmingKeywords.some(keyword => lowerTopic.includes(keyword));
 }
 
-/**
- * Detects programming language from topic for syntax highlighting
- */
 function detectLanguage(topic) {
   const langMap = {
     'python': 'python', 'javascript': 'javascript', 'js': 'javascript',
@@ -87,30 +80,27 @@ function detectLanguage(topic) {
   for (const [key, lang] of Object.entries(langMap)) {
     if (lowerTopic.includes(key)) return lang;
   }
-  return 'java'; // Safe default
+  return 'java';
 }
 
 // ==================== TEXT PROCESSING ====================
-/**
- * CHANGED: More aggressive cleaning of markdown artifacts and HTML
- */
 function cleanUpAIText(text) {
   if (!text) return '';
   return text
     // Remove greeting lines
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-    // Strip HTML artifacts
-    .replace(/<header>[\s\S]*?<\/header>/gi, '')
-    .replace(/<footer>[\s\S]*?<\/footer>/gi, '')
-    .replace(/<figure>[\s\S]*?<\/figure>/gi, '')
-    // Remove markdown tables of contents markers
+    // Strip HTML artifacts completely
+    .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
+    // Remove standalone "Table of Contents" lines
     .replace(/^\s*Table of Contents\s*$/gim, '')
+    // Fix spacing: ensure numbers followed by words have space
+    .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
     // Fix split words (e.g., "J ava" -> "Java") - but NOT in code blocks
     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
       if (match.includes('`') || match.includes('```')) return match;
       return p1 + p2;
     })
-    // Remove ALL escaping of brackets/parentheses
+    // Remove escaping of brackets/parentheses
     .replace(/\\([[\]{}()])/g, '$1')
     // Collapse excessive newlines
     .replace(/\n{3,}/g, '\n\n')
@@ -121,11 +111,21 @@ function cleanUpAIText(text) {
     .trim();
 }
 
+/**
+ * NEW: Enhanced to protect markdown tables
+ */
 function formatMath(content) {
   const links = [];
   const codeBlocks = [];
+  const tables = [];
   
-  // Protect code blocks FIRST
+  // Protect markdown tables (lines starting with | and having header separators)
+  content = content.replace(/(\|.*\|[\s]*\n\|[-:\s|]+\|[\s]*\n(\|.*\|[\s]*\n)*)/g, (table) => {
+    tables.push(table);
+    return `__TABLE__${tables.length - 1}__`;
+  });
+  
+  // Protect code blocks
   content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (_, code) => {
     codeBlocks.push(code);
     return `__CODE__${codeBlocks.length - 1}__`;
@@ -149,9 +149,13 @@ function formatMath(content) {
     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 
-  // Restore links and code blocks
+  // Restore links
   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
   
+  // Restore tables
+  content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  
+  // Restore code blocks
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
     const code = codeBlocks[i];
     if (code.includes('\n')) {
@@ -207,6 +211,9 @@ function deleteFile(filePath) {
 }
 
 // ==================== TOC PARSER ====================
+/**
+ * FINAL FIX: Better title extraction, no truncation, handles "Chapter X:" format
+ */
 function parseTOC(tocContent) {
   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
   const chapters = [];
@@ -217,7 +224,7 @@ function parseTOC(tocContent) {
     
     if (!line) continue;
 
-    // Smarter line merging
+    // Smart line merging for broken words
     if (line.length === 1 && /^[A-Z]$/.test(line) && i + 1 < lines.length) {
       const nextLine = lines[i + 1];
       if (nextLine && nextLine.length > 5 && !nextLine.match(/^[\s]*[-•*·\d]/) && !nextLine.startsWith(' ')) {
@@ -226,32 +233,34 @@ function parseTOC(tocContent) {
       }
     }
 
-    // Support both "Chapter 1: Title" and "1. Title" formats
+    // Match chapter lines: "Chapter 1: Title" OR "1. Title" OR "- Title"
     const chapterMatch = line.match(/^Chapter\s+\d+:\s*(.+)$/i);
     const simpleMatch = line.match(/^(?:\d+[\.\):]|\d+\s+|[-\*•])\s*(.+)$/i);
     const chapMatch = chapterMatch || simpleMatch;
     
     if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
-      let title = chapMatch[1].trim().replace(/[:–—*].*$/, '').trim();
-      title = title.replace(/\*\s*$/g, '').replace(/^\d+\.\s*/, '');
+      let title = chapMatch[1].trim();
       
-      // Don't force Java replacement - let AI use natural language
+      // Remove trailing punctuation but keep the full title
+      title = title.replace(/[:–—*]\s*$/, '').trim();
+      title = title.replace(/^\d+\.\s*/, '');
       
-      if (title && title.length > 5 && !/^(introduction|chapter|basics|overview|conclusion)/i.test(title)) {
+      // Validate it's a real chapter title (not too short, not generic)
+      if (title && title.length > 10 && !/^(introduction|chapter|basics|overview|conclusion)$/i.test(title)) {
         if (current) chapters.push(current);
         current = { title, subtopics: [] };
       }
     } else if (current && line.match(/^[\s]*[-•*·]\s+(.+)$/)) {
       const sub = line.match(/^[\s]*[-•*·]\s+(.+)$/)[1].trim();
-      if (sub && !/^(subtopic|section|part)/i.test(sub)) {
+      if (sub && sub.length > 5 && !/^(subtopic|section|part)/i.test(sub)) {
         current.subtopics.push(sub);
       }
     }
   }
   if (current) chapters.push(current);
 
-  const valid = chapters.filter(c => c.subtopics.length >= 2);
-  logger.debug(`Parsed ${valid.length} valid chapters from ${chapters.length} total`);
+  const valid = chapters.filter(c => c.subtopics.length >= 3);
+  logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
   return valid.slice(0, 10);
 }
 
@@ -271,7 +280,6 @@ function generateFallbackTOC(bookTopic) {
     "Building Expertise"
   ];
   
-  // Only append topic if it's a short tech name
   const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
   const suffix = isTechName ? ` in ${cleanTopic}` : '';
   
@@ -352,14 +360,10 @@ REQUIREMENTS (FOLLOW EXACTLY):
 - NO extra text, NO explanations, NO markdown
 - Make titles descriptive and unique
 - Example format:
-Chapter 1: Setting Up Your Environment
-   - Installing JDK
-   - Choosing an IDE
-   - Running first program
-Chapter 2: Variables and Data Types
-   - Primitives vs References
-   - Type casting
-   - Common errors
+Chapter 1: Getting Started
+   - Core Concepts
+   - Practical Steps
+   - Common Mistakes
 [... continues to Chapter 10]`;
 
   let attempts = 0;
@@ -393,7 +397,7 @@ Chapter 2: Variables and Data Types
 }
 
 /**
- * CHANGED: Dynamic prompt based on topic type - no forced code examples
+ * FINAL FIX: Dynamic structure, NO duplicate headers, PROPER subtopic integration
  */
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const language = detectLanguage(bookTopic);
@@ -402,72 +406,69 @@ async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   // Build dynamic structure based on topic type
   let promptStructure = `
 - Structure:
-  1) Short intro (50-80 words)
+  1) Short intro (50-80 words) - NO heading
   2) ## Concepts — explain key ideas (200-300 words)`;
   
   if (isProgramming) {
-    // Only include code examples for programming topics
     promptStructure += `
-  3) ## Example 1 — show ${language} code with clear explanation (include fenced code block)
-  4) ## Example 2 — practical applied snippet with ${language} code`;
+  3) ### ${chapterInfo.subtopics[0]} — Show ${language} code with explanation (include fenced code block)
+  4) ### ${chapterInfo.subtopics[1]} — Practical ${language} snippet with context
+  5) ### ${chapterInfo.subtopics[2]} — Common pitfalls and solutions`;
   } else {
-    // For non-programming topics, use real-world examples instead
     promptStructure += `
-  3) ## Example 1 — detailed real-world scenario or case study
-  4) ## Example 2 — practical application or hands-on exercise`;
+  3) ### ${chapterInfo.subtopics[0]} — Detailed real-world scenario or case study
+  4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
+  5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions`;
   }
   
   promptStructure += `
-  5) ## Exercise — 1 short question with "## Solution" section
+  6) ### Exercise — 1 short question
+  7) ### Solution — Clear answer to the exercise
   End with "Further reading:" and 2 references.`;
 
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 CRITICAL FORMATTING RULES:
-- Start with "## ${chapterInfo.title}" as the main heading
-- NO "Chapter ${chapterNumber}" prefix in the heading
-- Use proper markdown formatting
+- Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
+- Do NOT repeat the title as a second heading
+- Use ### for ALL subsections (including the three listed above)
+- Use proper markdown tables with | separators for comparisons
+- Use blockquotes (>) for important notes or definitions
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
-- 400+ words total
+- 500+ words total
 ${promptStructure}
-- Incorporate these subsections: ${chapterInfo.subtopics.map(s => `## ${s}`).join('\n')}
-- Output only the chapter content.`;
+- Output ONLY the chapter content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-    minLength: 1500,
-    genOptions: { maxOutputTokens: 3000, temperature: 0.4 }
+    minLength: 1800,
+    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
   }));
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
   const titles = chapterInfos.map(c => c.title).join(', ');
-  const prompt = `Write conclusion for "${bookTopic}".
-Summarize: ${titles}
-Include 3-5 resources with descriptions.
-250-300 words, professional tone.`;
+  const prompt = `Write a professional conclusion for "${bookTopic}".
+Summarize these key topics: ${titles}
+Include 3-5 authoritative resources with descriptions.
+300-350 words, formal tone, no code examples.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-    minLength: 1000,
-    genOptions: { maxOutputTokens: 1500, temperature: 0.4 }
+    minLength: 1200,
+    genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
   }));
 }
 
 // ==================== PDF GENERATION ====================
-/**
- * CHANGED: Better markdown cleaning and HTML structure
- */
 function buildEnhancedHTML(content, bookTitle) {
-  // Clean up any remaining markdown artifacts
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   
-  // Extract clean title for cover - remove "Chapter X:" prefix
+  // Extract clean title for cover
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
   displayTitle = displayTitle
     .replace(/^Chapter\s+\d+:\s*/i, '')
     .replace(/^\d+\.\s*/, '')
-    .replace(/\bin\s+\w+$/i, '') // Remove "in Java" etc from title
     .trim();
 
   return `<!DOCTYPE html>
@@ -535,7 +536,7 @@ function buildEnhancedHTML(content, bookTitle) {
   </div>
   <div class="chapter-content">${marked.parse(formattedContent)}</div>
   <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
-  <script>document.addEventListener('DOMContent Loaded', () => { Prism.highlightAll(); });</script>
+  <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
 </body>
 </html>`;
 }
@@ -603,7 +604,7 @@ export async function generateBookMedd(rawTopic, userId) {
     userHistories.delete(safeUserId);
     const { raw: tocRaw, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
     
-    // Format TOC nicely for the PDF
+    // Format TOC for PDF
     const formattedTOC = chapterInfos.map((ch, i) => {
       const num = i + 1;
       return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
@@ -678,8 +679,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
