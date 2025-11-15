@@ -10,47 +10,40 @@ import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
 // ========== FIXED: Define class FIRST ==========
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
     this.requests = [];
   }
-
   async wait() {
-    const now = Date.now();
+    let now = Date.now();
     this.requests = this.requests.filter(time => now - time < 60000);
-    if (this.requests.length >= this.requestsPerMinute) {
+    while (this.requests.length >= this.requestsPerMinute) {
       const oldest = this.requests[0];
       const waitTime = 60000 - (now - oldest) + 1000;
       await new Promise(resolve => setTimeout(resolve, waitTime));
-      return this.wait();
+      now = Date.now();
+      this.requests = this.requests.filter(time => now - time < 60000);
     }
     this.requests.push(now);
   }
 }
-
 // ========== NOW safe to instantiate ==========
 const RATE_LIMIT = 15;
 const globalRateLimiter = new RateLimiter(RATE_LIMIT);
-
 // Constants
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash';
-
+const MODEL_NAME = 'gemini-1.5-flash'; // FIXED: Corrected to valid model name
 // API Keys - MOVE TO ENVIRONMENT VARIABLES IN PRODUCTION
 const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo';
 const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
-
 const genAI = new GoogleGenerativeAI(API_KEY);
 const userHistories = new Map();
-
 // Logger
 const logger = winston.createLogger({
   level: 'info',
@@ -63,11 +56,9 @@ const logger = winston.createLogger({
     new winston.transports.Console({ format: winston.format.simple() })
   ]
 });
-
 // Ensure directories
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-
 // Configure marked
 marked.setOptions({
   headerIds: false,
@@ -80,12 +71,10 @@ marked.setOptions({
     return code;
   }
 });
-
 // Utilities
 function getHistoryFile(userId) {
   return path.join(HISTORY_DIR, `history-${userId}.json`);
 }
-
 function loadConversationHistory(userId) {
   try {
     return JSON.parse(fs.readFileSync(getHistoryFile(userId), 'utf8'));
@@ -93,16 +82,13 @@ function loadConversationHistory(userId) {
     return [];
   }
 }
-
 function saveConversationHistory(userId, history) {
   fs.writeFileSync(getHistoryFile(userId), JSON.stringify(history, null, 2));
 }
-
 function saveToFile(filename, content) {
   fs.writeFileSync(filename, content);
   logger.info(`Saved: ${filename}`);
 }
-
 function deleteFile(filePath) {
   try {
     fs.unlinkSync(filePath);
@@ -110,70 +96,56 @@ function deleteFile(filePath) {
     logger.warn(`Delete failed: ${filePath}`);
   }
 }
-
-// Aggressive cleaning to remove duplicates and childish language
+// Simplified cleanup: remove boilerplate, collapse newlines, deduplicate paragraphs, unescape code artifacts
 function cleanUpAIText(text) {
   if (!text) return '';
-  
-  return text
-    // Remove ALL duplicate intros
-    .replace(/^Hello there.*I'm Hailu.*$/gim, '')
-    .replace(/^Hi there.*I'm Hailu.*$/gim, '')
-    .replace(/^Hey there.*I'm Hailu.*$/gim, '')
-    // Remove inline chapter headers
-    .replace(/^Chapter \d+:.*$/gm, '')
-    .replace(/^#\s*\d+\.\s+/gm, '# ')
-    // Fix spacing issues
-    .replace(/H\s+ello/g, 'Hello')
-    .replace(/T\s+he/g, 'The')
-    // Normalize whitespace
-    .replace(/^(?:[-=_~\s]{5,})$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\n\s*$/g, "")
-    // Fix dashes
-    .replace(/[\u2013\u2014]/g, "-")
-    // Remove childish phrases
-    .replace(/\b(super )?duper\b/gi, '')
-    .replace(/\b(purr-fect|paws-abilities|tabby)\b/gi, '')
-    .replace(/\b(meow-nificent|furr)\b/gi, '')
+  let t = text
+    // Remove obvious assistant intros
+    .replace(/^(?:Hi|Hello|Hey)(?:[,!.].*)?(\s*I('?| a)m .*?)?/gim, '')
+    // Unescape common code artifacts
+    .replace(/\\(/g, '(').replace(/\\)/g, ')').replace(/\\[/g, '[').replace(/\\]/g, ']')
+    // Collapse >3 newlines
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
+  // Deduplicate consecutive paragraphs
+  const paras = t.split('\n\n').filter((p, i, arr) => p.trim() && p !== arr[i - 1]);
+  return paras.join('\n\n').trim();
 }
-
-// Parse TOC
+// Parse TOC with subtopics support
 function parseTOC(tocContent) {
   const chapters = [];
-  const lines = tocContent.split('\n').filter(line => line.trim());
-  
+  const lines = tocContent.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && l.length > 0);
+  let currentChapter = null;
+
   for (const line of lines) {
-    const match = line.match(/^(?:\d+[.)]\s+)(.+?)(?:\s*[:–-]\s*.+)?$/i);
-    if (match) {
-      const title = match[1].trim();
-      if (!title.match(/^(subtopic|topic|section)/i) && title.length > 5) {
-        chapters.push(title);
+    // Chapter match: "1. Title", "1) Title", etc.
+    const chapterMatch = line.match(/^(?:\d+[\.)]?\s*)?(?:[-*]\s*)?(.*?)(?:\s*[:–—-]\s*.*)?$/);
+    if (chapterMatch && !line.startsWith('-') && !line.startsWith('  ')) {
+      const title = chapterMatch[1].trim();
+      if (title && title.length > 3 && !/^(subtopic|topic|section)$/i.test(title)) {
+        currentChapter = { title, subtopics: [] };
+        chapters.push(currentChapter);
+      }
+    } else if (currentChapter && line.match(/^\s*[-*]\s*(.+)$/)) {
+      // Subtopic match: " - Subtopic"
+      const subMatch = line.match(/^\s*[-*]\s*(.+)$/);
+      if (subMatch) {
+        currentChapter.subtopics.push(subMatch[1].trim());
       }
     }
   }
-  
-  // Validate chapter count
-  if (chapters.length !== 10) {
-    logger.warn(`Expected 10 chapters, got ${chapters.length}. Using defaults.`);
-    return [
-      'Introduction to the Topic',
-      'Core Concepts and Principles',
-      'Practical Applications',
-      'Common Challenges and Solutions',
-      'Tools and Technologies',
-      'Best Practices',
-      'Case Studies and Examples',
-      'Troubleshooting Guide',
-      'Future Trends',
-      'Conclusion and Next Steps'
-    ];
-  }
-  
-  return chapters.slice(0, 10);
-}
 
+  // Validate: Aim for 10 chapters, each with 3-5 subtopics
+  if (chapters.length >= 6 && chapters.length <= 14 && chapters.every(c => c.subtopics.length >= 2 && c.subtopics.length <= 6)) {
+    return chapters.slice(0, 10);
+  }
+
+  logger.warn(`TOC parsing got ${chapters.length} chapters.`);
+  // No quoted fallback; return empty for regeneration
+  return [];
+}
 // Math formatting
 function formatMath(content) {
   return content
@@ -183,28 +155,33 @@ function formatMath(content) {
     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 }
-
 // AI Interaction
 async function askAI(prompt, userId, bookTopic, options = {}) {
   await globalRateLimiter.wait();
-  
+
+  const genCfg = options.genOptions || { maxOutputTokens: 4000, temperature: 0.7, topP: 0.9 };
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
-    generationConfig: {
-      maxOutputTokens: 4000,
-      temperature: 0.7,
-      topP: 0.9,
-    },
+    generationConfig: genCfg,
   });
-
   try {
     const result = await model.generateContent(prompt);
-    let reply = result.response.text();
-    
+    let reply = '';
+    if (result.response && typeof result.response.text === 'function') {
+      reply = await result.response.text();
+    } else if (result.output && Array.isArray(result.output)) {
+      reply = result.output.map(o => (o?.content || o?.text || '')).join('\n');
+    } else if (result.text) {
+      reply = result.text;
+    }
+    reply = (reply || '').toString();
+
+    if (options.minLength && reply.trim().length < options.minLength) {
+      throw new Error('Response too short (minLength check)');
+    }
     if (!reply || reply.trim().length < 200) {
       throw new Error('Response too short or empty');
     }
-
     if (options.saveToHistory) {
       const history = userHistories.get(userId) || [];
       history.push({ role: 'user', content: prompt });
@@ -212,67 +189,73 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
       userHistories.set(userId, history);
       saveConversationHistory(userId, history);
     }
-
     return reply;
-
   } catch (error) {
     logger.error(`❌ AI request failed: ${error.message}`);
     throw error;
   }
 }
-
-// Generate TOC
+// Generate TOC with subtopics and regeneration on failure
 async function generateTOC(bookTopic, userId) {
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
-
 Requirements:
 - EXACTLY 10 chapters with descriptive, unique titles
+- Each chapter MUST have 3-5 subtopics, listed indented under the chapter
 - NO generic names like "Introduction" or "Chapter 1"
-- Format as simple numbered list: "1. Title", "2. Title", etc.
-- NO extra text, NO explanations
+- Format EXACTLY as: "1. Title\n   - Subtopic1\n   - Subtopic2\n   - etc."
+- NO extra text, NO explanations, NOTHING else
 - Focus ONLY on ${bookTopic}`;
-
-  const toc = await askAI(prompt, userId, bookTopic, { saveToHistory: true });
-  return cleanUpAIText(toc);
+  
+  let attempts = 0;
+  let tocContent;
+  while (attempts < 3) {
+    const genOptions = { temperature: attempts === 0 ? 0.0 : 0.0, topP: 0.0, maxOutputTokens: 400 };
+    tocContent = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
+    tocContent = cleanUpAIText(tocContent);
+    const parsed = parseTOC(tocContent);
+    if (parsed.length === 10) {
+      return { raw: tocContent, parsed };
+    }
+    attempts++;
+    logger.warn(`TOC regeneration attempt ${attempts}`);
+  }
+  throw new Error('Failed to generate valid TOC after retries. Refine the topic.');
 }
-
-// Generate chapter
-async function generateChapter(bookTopic, chapterNumber, chapterTitle, userId) {
-  const prompt = `Write Chapter ${chapterNumber}: "${chapterTitle}" for a book about "${bookTopic}".
-
+// Generate chapter using subtopics
+async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+  const { title, subtopics } = chapterInfo;
+  const subSections = subtopics.map(s => `## ${s}`).join('\n');
+  const prompt = `Write Chapter ${chapterNumber}: "${title}" for a book about "${bookTopic}".
 CRITICAL:
 - NO self-introduction
 - NO "Chapter ${chapterNumber}" heading
 - Start with content directly
 - 400+ words, clear tone, practical examples
-- Use ## for subsections
-- Focus ONLY on "${chapterTitle}"
-
+- MUST follow EXACT structure:
+  1) Short intro (50-80 words)
+  2) ## Concepts — explain key ideas (200-300 words)
+  3) ## Example 1 — show code with explanation (include fenced code block)
+  4) ## Example 2 — practical applied snippet
+  5) ## Exercise — 1 short exercise and then "## Solution" with a concise answer
+  End with "Further reading:" and 2 references.
+- Incorporate these EXACT subsections: ${subSections}
+- Output only the chapter content. Use clear, minimal language.
 Content:`;
-
-  const content = await askAI(prompt, userId, bookTopic);
-  return cleanUpAIText(content);
+  return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 2200, genOptions: { temperature: 0.4, maxOutputTokens: 2000 } }));
 }
-
 // Generate conclusion
 async function generateConclusion(bookTopic, chapterTitles, userId) {
+  const titlesStr = chapterTitles.map(c => c.title).join(', ');
   const prompt = `Write conclusion for "${bookTopic}".
-
-Summarize: ${chapterTitles.join(', ')}
+Summarize: ${titlesStr}
 Include 3-5 resources with descriptions.
 250-300 words, professional tone.`;
-
-  const conclusion = await askAI(prompt, userId, bookTopic);
-  return cleanUpAIText(conclusion);
+  return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1400, genOptions: { temperature: 0.4 } }));
 }
-
 function buildHTML(content, bookTitle) {
   const processed = formatMath(content);
   const markdownHtml = marked.parse(processed);
-  
-  // FIX: Escape curly braces in content to prevent Nutrient API errors
   const escapedContent = markdownHtml.replace(/{/g, '&#123;').replace(/}/g, '&#125;');
-
   return `<!DOCTYPE html>
   <html lang="en">
     <head>
@@ -344,12 +327,10 @@ function buildHTML(content, bookTitle) {
     </body>
   </html>`;
 }
-
 // PDF Generation
 async function generatePDF(content, outputPath, bookTitle) {
   try {
     const html = buildHTML(content, bookTitle);
-    
     const formData = new FormData();
     const instructions = {
       parts: [{ html: "index.html" }],
@@ -376,108 +357,83 @@ async function generatePDF(content, outputPath, bookTitle) {
         }
       }
     };
-    
     formData.append('instructions', JSON.stringify(instructions));
     formData.append('index.html', Buffer.from(html), {
       filename: 'index.html',
       contentType: 'text/html'
     });
-
-    const response = await fetch('https://api.nutrient.io/build', { // FIXED: removed trailing space
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${NUTRIENT_API_KEY}` // Use your constant
+        'Authorization': `Bearer ${NUTRIENT_API_KEY}`
       },
       body: formData
     });
-
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
     }
-
     const pdfBuffer = await response.buffer();
     fs.writeFileSync(outputPath, pdfBuffer);
     logger.info(`✅ Generated premium PDF: ${outputPath}`);
     return outputPath;
-
   } catch (error) {
     logger.error(`❌ PDF generation failed: ${error.message}`);
     throw error;
   }
 }
-
 // Main generation function
 export async function generateBookMedd(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase()}`;
-  
   logger.info(`=== Starting: "${bookTopic}" for ${safeUserId} ===`);
-
   try {
     userHistories.delete(safeUserId);
-    
     // Step 1: TOC
     logger.info('Step 1/3: Generating Table of Contents...');
-    const tocContent = await generateTOC(bookTopic, safeUserId);
-    const chapterTitles = parseTOC(tocContent);
-    logger.info(`Chapters: ${chapterTitles.join(' | ')}`);
-    
+    const { raw: tocContent, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
+    logger.info(`Chapters: ${chapterInfos.map(c => c.title).join(' | ')}`);
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
     saveToFile(tocFile, `# Table of Contents\n\n${tocContent}\n\n---\n`);
     const chapterFiles = [tocFile];
-    
     // Step 2: Chapters
     logger.info('Step 2/3: Generating chapters...');
-    for (let i = 0; i < chapterTitles.length; i++) {
-      if (global.cancelFlags?.[userId]) {
-        delete global.cancelFlags[userId];
+    for (let i = 0; i < chapterInfos.length; i++) {
+      if (global.cancelFlags?.[safeUserId]) {
+        delete global.cancelFlags[safeUserId];
+        logger.info(`Generation cancelled for ${safeUserId}`);
         throw new Error('Generation cancelled');
       }
-
       const chapterNum = i + 1;
-      const title = chapterTitles[i];
-      logger.info(`  ${chapterNum}. ${title}`);
-      
-      const chapterContent = await generateChapter(bookTopic, chapterNum, title, safeUserId);
-      const separatedContent = `\n<div class="chapter-break"></div>\n\n# Chapter ${chapterNum}: ${title}\n\n${chapterContent}\n\n---\n`;
-      
+      const info = chapterInfos[i];
+      logger.info(` ${chapterNum}. ${info.title}`);
+      const chapterContent = await generateChapter(bookTopic, chapterNum, info, safeUserId);
+      const separatedContent = `\n<div class="chapter-break"></div>\n\n# Chapter ${chapterNum}: ${info.title}\n\n${chapterContent}\n\n---\n`;
       const filename = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chapterNum}.txt`);
       saveToFile(filename, separatedContent);
       chapterFiles.push(filename);
-      
-      if (i < chapterTitles.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 4000));
-      }
     }
-    
     // Step 3: Conclusion
     logger.info('Step 3/3: Conclusion...');
-    const conclusion = await generateConclusion(bookTopic, chapterTitles, safeUserId);
+    const conclusion = await generateConclusion(bookTopic, chapterInfos, safeUserId);
     const conclusionFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
     saveToFile(conclusionFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
     chapterFiles.push(conclusionFile);
-    
     // Combine & generate PDF
     const combinedContent = chapterFiles.map(file => fs.readFileSync(file, 'utf8')).join('\n');
     const safeTopic = bookTopic.slice(0, 20).replace(/\s+/g, '_');
     const outputPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeTopic}.pdf`);
-    
     await generatePDF(combinedContent, outputPath, bookTopic);
-    
     // Cleanup
     chapterFiles.forEach(deleteFile);
     userHistories.delete(safeUserId);
-    
     logger.info(`=== Complete: ${outputPath} ===`);
     return outputPath;
-
   } catch (error) {
     logger.error(`❌ Failed: ${error.message}`);
     throw error;
   }
 }
-
 // Queue system
 const bookQueue = async.queue(async (task, callback) => {
   try {
@@ -487,7 +443,6 @@ const bookQueue = async.queue(async (task, callback) => {
     callback(error);
   }
 }, 1);
-
 export function queueBookGeneration(bookTopic, userId) {
   return new Promise((resolve, reject) => {
     bookQueue.push({ bookTopic, userId }, (error, result) => {
@@ -496,8 +451,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
