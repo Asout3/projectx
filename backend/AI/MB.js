@@ -1,4 +1,4 @@
-// AI/MB.js – FIXED: Chapter Titles, Code Blocks & Tables
+// AI/MB.js – FULLY FIXED: Code Blocks, Titles, Tables & HTML Artifacts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -60,13 +60,16 @@ function cleanUpAIText(text) {
   return text
     // Remove greeting lines
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-    // Remove trailing asterisks (fixes "Chapter 1: Title*")
-    .replace(/\*\s*$/g, '')
-    // Remove leading asterisks on lines
-    .replace(/^\*\s*/gm, '')
-    // Fix escaped parentheses/brackets
-    .replace(/\\\(/g, '(').replace(/\\\)/g, ')')
-    .replace(/\\\[/g, '[').replace(/\\\]/g, ']')
+    // Strip HTML artifacts
+    .replace(/<header>[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer>[\s\S]*?<\/footer>/gi, '')
+    .replace(/<figure>[\s\S]*?<\/figure>/gi, '')
+    // Remove trailing asterisks from lines
+    .replace(/\*\s*$/gm, '')
+    // Fix split words (e.g., "J ava" -> "Java")
+    .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, '$1$2')
+    // Remove ALL escaping of brackets/parentheses
+    .replace(/\\([[\]{}()])/g, '$1')
     // Collapse excessive newlines
     .replace(/\n{3,}/g, '\n\n')
     // Normalize dashes
@@ -76,21 +79,43 @@ function cleanUpAIText(text) {
 
 function formatMath(content) {
   const links = [];
-  // Protect links
+  const codeBlocks = [];
+  
+  // STEP 1: Protect code blocks and inline code from processing
+  content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (_, code) => {
+    codeBlocks.push(code);
+    return `__CODE__${codeBlocks.length - 1}__`;
+  });
+  
+  content = content.replace(/`([^`]+)`/g, (_, code) => {
+    codeBlocks.push(code);
+    return `__CODE__${codeBlocks.length - 1}__`;
+  });
+
+  // STEP 2: Process math (links, inline math, fractions)
   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
     links.push(`<a href="${url}" target="_blank">${text}</a>`);
     return `__LINK__${links.length - 1}__`;
   });
 
-  // Convert math notation
   content = content
-    .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
-    .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
-    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, (_, base, exp) => `\\(${base}^{${exp}}\\)`)
-    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`);
+    .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
+    .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
+    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
+    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 
-  // Restore links
+  // STEP 3: Restore links and code blocks
   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
+  
+  content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
+    const code = codeBlocks[i];
+    // Restore with proper markdown fence if it's a block
+    if (code.includes('\n')) {
+      return `\`\`\`java\n${code}\n\`\`\``;
+    }
+    return `\`${code}\``;
+  });
+
   return content;
 }
 
@@ -98,7 +123,7 @@ function formatMath(content) {
 marked.setOptions({
   headerIds: false,
   breaks: true,
-  gfm: true, // Enables tables and other GitHub-flavored markdown
+  gfm: true, // Enables tables, strikethrough, etc.
   highlight: function(code, lang) {
     if (lang && hljs.getLanguage(lang)) {
       return hljs.highlight(code, { language: lang }).value;
@@ -144,9 +169,12 @@ function parseTOC(tocContent) {
   let current = null;
 
   for (const line of lines) {
+    // Match chapter lines (not subtopics)
     const chapMatch = line.match(/^(\d+[\.\)]|\d+\s+|[-\*•]|\d+\s*[-\):–—]?)\s*(.+)$/i);
-    if (chapMatch && !line.startsWith('  -')) {
+    if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
       const title = chapMatch[2].trim().replace(/[:–—*].*$/, '').trim();
+      // Clean up title: remove trailing asterisks and numbers
+      title = title.replace(/\*\s*$/g, '').replace(/^\d+\.\s*/, '');
       if (title && title.length > 5 && !/^(introduction|chapter|basics|overview|conclusion)/i.test(title)) {
         if (current) chapters.push(current);
         current = { title, subtopics: [] };
@@ -186,7 +214,7 @@ function generateFallbackTOC(bookTopic) {
     ]
   }));
   const raw = chapters.map(c =>
-    `Chapter ${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
+    `${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
   ).join('\n');
   return { raw, parsed: chapters };
 }
@@ -280,18 +308,21 @@ Requirements:
 
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
-CRITICAL:
-- NO self-introduction, NO "Chapter ${chapterNumber}" heading
-- Start directly with content
-- 400+ words, clear tone, practical examples
-- MUST follow EXACT structure:
+CRITICAL FORMATTING RULES:
+- Start with "## ${chapterInfo.title}" as the main heading
+- NO "Chapter ${chapterNumber}" prefix in the title
+- Use proper markdown code fences with language tags: \`\`\`java ... \`\`\`
+- Use markdown tables (| header | header |) for comparisons
+- NO trailing asterisks (*) on any lines
+- NO HTML tags like <header> or <footer>
+- 400+ words total
+- Structure:
   1) Short intro (50-80 words)
   2) ## Concepts — explain key ideas (200-300 words)
   3) ## Example 1 — show code with explanation (include fenced code block)
   4) ## Example 2 — practical applied snippet
   5) ## Exercise — 1 short exercise and "## Solution" with answer
   End with "Further reading:" and 2 references.
-- Use markdown tables for comparisons or reference data where appropriate
 - Incorporate these subsections: ${chapterInfo.subtopics.map(s => `## ${s}`).join('\n')}
 - Output only the chapter content.`;
 
@@ -319,8 +350,10 @@ function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   
+  // Extract clean title: remove "Chapter X:" prefix and numbers
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
-  const displayTitle = titleMatch ? titleMatch[1].replace(/^Chapter\s+\d+:\s*/, '').trim() : bookTitle;
+  let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
+  displayTitle = displayTitle.replace(/^Chapter\s+\d+:\s*/, '').replace(/^\d+\.\s*/, '').trim();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -330,7 +363,7 @@ function buildEnhancedHTML(content, bookTitle) {
   <title>${displayTitle} - Bookgen.ai</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght:300;400;700&family=Inter:wght:400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght:400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
@@ -523,8 +556,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
