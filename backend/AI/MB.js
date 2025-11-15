@@ -103,7 +103,7 @@ function cleanUpAIText(text) {
     // Remove obvious assistant intros
     .replace(/^(?:Hi|Hello|Hey)(?:[,!.].*)?(\s*I('?| a)m .*?)?/gim, '')
     // Unescape common code artifacts
-    .replace(/\\(/g, '(').replace(/\\)/g, ')').replace(/\\[/g, '[').replace(/\\]/g, ']')
+    .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\[/g, '[').replace(/\\\]/g, ']')
     // Collapse >3 newlines
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -451,8 +451,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
