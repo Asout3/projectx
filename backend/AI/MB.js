@@ -114,55 +114,96 @@ function cleanUpAIText(text) {
 /**
  * NEW: Enhanced to protect markdown tables
  */
-function formatMath(content) {
-  const links = [];
-  const codeBlocks = [];
-  const tables = [];
+// function formatMath(content) {
+//   const links = [];
+//   const codeBlocks = [];
+//   const tables = [];
   
-  // Protect markdown tables (lines starting with | and having header separators)
-  content = content.replace(/(\|.*\|[\s]*\n\|[-:\s|]+\|[\s]*\n(\|.*\|[\s]*\n)*)/g, (table) => {
-    tables.push(table);
+//   // Protect markdown tables (lines starting with | and having header separators)
+//   content = content.replace(/(\|.*\|[\s]*\n\|[-:\s|]+\|[\s]*\n(\|.*\|[\s]*\n)*)/g, (table) => {
+//     tables.push(table);
+//     return `__TABLE__${tables.length - 1}__`;
+//   });
+  
+//   // Protect code blocks
+//   content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (_, code) => {
+//     codeBlocks.push(code);
+//     return `__CODE__${codeBlocks.length - 1}__`;
+//   });
+  
+//   // Protect inline code
+//   content = content.replace(/`([^`]+)`/g, (_, code) => {
+//     codeBlocks.push(code);
+//     return `__CODE__${codeBlocks.length - 1}__`;
+//   });
+
+//   // Process math and links
+//   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+//     links.push(`<a href="${url}" target="_blank">${text}</a>`);
+//     return `__LINK__${links.length - 1}__`;
+//   });
+
+//   content = content
+//     .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
+//     .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
+//     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
+//     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
+
+//   // Restore links
+//   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
+  
+//   // Restore tables
+//   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  
+//   // Restore code blocks
+//   content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
+//     const code = codeBlocks[i];
+//     if (code.includes('\n')) {
+//       return `\`\`\`\n${code}\n\`\`\``;
+//     }
+//     return `\`${code}\``;
+//   });
+
+//   return content;
+// }
+
+function formatMath(content) {
+  const tables = [];
+  const codeBlocks = [];
+
+  // Protect tables (GitHub-style)
+  content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
+    tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
-  
-  // Protect code blocks
-  content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (_, code) => {
-    codeBlocks.push(code);
+
+  // Protect fenced code
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
+    codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
-  
+
   // Protect inline code
-  content = content.replace(/`([^`]+)`/g, (_, code) => {
-    codeBlocks.push(code);
+  content = content.replace(/`([^`]+)`/g, (match) => {
+    codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // Process math and links
-  content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    links.push(`<a href="${url}" target="_blank">${text}</a>`);
-    return `__LINK__${links.length - 1}__`;
-  });
+  // ======== FIX MATH ========
+  // Fractions like 3/5 → \( \frac{3}{5} \)
+  content = content.replace(/\b(\d+)\s*\/\s*(\d+)\b/g, '\\(\\\\frac{$1}{$2}\\\\)');
 
-  content = content
-    .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
-    .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
-    .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
-    .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
+  // Powers like x^2 → \( x^{2} \)
+  content = content.replace(/\b([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)\b/g, '\\($1^{$2}\\)');
 
-  // Restore links
-  content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
-  
+  // Scientific notation like 3e8 → \( 3 \times 10^{8} \)
+  content = content.replace(/\b(\d+)e(\d+)\b/gi, '\\($1 \\times 10^{$2}\\)');
+
   // Restore tables
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
-  
+
   // Restore code blocks
-  content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
-    const code = codeBlocks[i];
-    if (code.includes('\n')) {
-      return `\`\`\`\n${code}\n\`\`\``;
-    }
-    return `\`${code}\``;
-  });
+  content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
 
   return content;
 }
@@ -431,7 +472,12 @@ CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
 - Use ### for ALL subsections (including the three listed above)
-- Use proper markdown tables with | separators for comparisons
+- ALL tables MUST use strict GitHub Markdown table syntax:
+  | Column A | Column B |
+  |----------|----------|
+  | value    | value    |
+- Do NOT use lists, bullets, dashes, colons, or anything else to simulate tables.
+- Never output "Action - Result" or "A | B" without a proper header + divider line.
 - Use blockquotes (>) for important notes or definitions
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
@@ -458,10 +504,25 @@ Include 3-5 authoritative resources with descriptions.
   }));
 }
 
+function repairBrokenTables(md) {
+  // If markdown uses a row without header → auto generate a header
+  return md.replace(
+    /(^|\n)(\|[^|\n]+\|[^|\n]+\|)(?!\n\|[-:\s|]+\|)/g,
+    (m, start, row) => {
+      const cols = row.split('|').filter(c => c.trim() !== '').length;
+      const header = row;
+      const divider = '|' + Array(cols).fill('---').join('|') + '|';
+      return `${start}${header}\n${divider}`;
+    }
+  );
+}
+
+
 // ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
+  const formattedContent = repairBrokenTables(formatMath(cleaned));
   
   // Extract clean title for cover
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
