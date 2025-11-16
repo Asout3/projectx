@@ -504,25 +504,10 @@ Include 3-5 authoritative resources with descriptions.
   }));
 }
 
-function repairBrokenTables(md) {
-  // If markdown uses a row without header → auto generate a header
-  return md.replace(
-    /(^|\n)(\|[^|\n]+\|[^|\n]+\|)(?!\n\|[-:\s|]+\|)/g,
-    (m, start, row) => {
-      const cols = row.split('|').filter(c => c.trim() !== '').length;
-      const header = row;
-      const divider = '|' + Array(cols).fill('---').join('|') + '|';
-      return `${start}${header}\n${divider}`;
-    }
-  );
-}
-
-
 // ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
-  const formattedContent = repairBrokenTables(formatMath(cleaned));
   
   // Extract clean title for cover
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
