@@ -84,12 +84,40 @@ function detectLanguage(topic) {
 }
 
 // ==================== TEXT PROCESSING ====================
+// function cleanUpAIText(text) {
+//   if (!text) return '';
+//   return text
+//     // Remove greeting lines
+//     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
+//     // Strip HTML artifacts completely
+//     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
+//     // Remove standalone "Table of Contents" lines
+//     .replace(/^\s*Table of Contents\s*$/gim, '')
+//     // Fix spacing: ensure numbers followed by words have space
+//     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
+//     // Fix split words (e.g., "J ava" -> "Java") - but NOT in code blocks
+//     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
+//       if (match.includes('`') || match.includes('```')) return match;
+//       return p1 + p2;
+//     })
+//     // Remove escaping of brackets/parentheses
+//     .replace(/\\([[\]{}()])/g, '$1')
+//     // Collapse excessive newlines
+//     .replace(/\n{3,}/g, '\n\n')
+//     // Normalize dashes
+//     .replace(/[\u2013\u2014]/g, '-')
+//     // Remove trailing asterisks
+//     .replace(/\*\s*$/gm, '')
+//     .trim();
+// }
+
+
 function cleanUpAIText(text) {
   if (!text) return '';
   return text
     // Remove greeting lines
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-    // Strip HTML artifacts completely
+    // Keep HTML tables - DON'T strip table tags
     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     // Remove standalone "Table of Contents" lines
     .replace(/^\s*Table of Contents\s*$/gim, '')
@@ -100,7 +128,7 @@ function cleanUpAIText(text) {
       if (match.includes('`') || match.includes('```')) return match;
       return p1 + p2;
     })
-    // Remove escaping of brackets/parentheses
+    // Remove escaping of brackets/parentheses (but keep LaTeX)
     .replace(/\\([[\]{}()])/g, '$1')
     // Collapse excessive newlines
     .replace(/\n{3,}/g, '\n\n')
@@ -108,12 +136,96 @@ function cleanUpAIText(text) {
     .replace(/[\u2013\u2014]/g, '-')
     // Remove trailing asterisks
     .replace(/\*\s*$/gm, '')
+    // Fix HTML entities
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
     .trim();
 }
 
 /**
  * NEW: Enhanced to protect markdown tables
  */
+// function formatMath(content) {
+//   const links = [];
+//   const codeBlocks = [];
+//   const tables = [];
+  
+//   // Protect markdown tables (lines starting with | and having header separators)
+//   content = content.replace(/(\|.*\|[\s]*\n\|[-:\s|]+\|[\s]*\n(\|.*\|[\s]*\n)*)/g, (table) => {
+//     tables.push(table);
+//     return `__TABLE__${tables.length - 1}__`;
+//   });
+  
+//   // Protect code blocks
+//   content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (_, code) => {
+//     codeBlocks.push(code);
+//     return `__CODE__${codeBlocks.length - 1}__`;
+//   });
+  
+//   // Protect inline code
+//   content = content.replace(/`([^`]+)`/g, (_, code) => {
+//     codeBlocks.push(code);
+//     return `__CODE__${codeBlocks.length - 1}__`;
+//   });
+
+//   // Process math and links
+//   content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+//     links.push(`<a href="${url}" target="_blank">${text}</a>`);
+//     return `__LINK__${links.length - 1}__`;
+//   });
+
+//   content = content
+//     .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
+//     .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
+//     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
+//     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
+
+//   // Restore links
+//   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
+  
+//   // Restore tables
+//   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  
+//   // Restore code blocks
+//   content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
+//     const code = codeBlocks[i];
+//     if (code.includes('\n')) {
+//       return `\`\`\`\n${code}\n\`\`\``;
+//     }
+//     return `\`${code}\``;
+//   });
+
+//   return content;
+// }
+
+/**
+ * Clean up malformed LaTeX math from AI output
+ */
+function cleanMathLaTeX(content) {
+  // Fix common AI LaTeX mistakes
+  return content
+    // Remove weird \dot{\mathrm{S}} patterns
+    .replace(/\\dot\{\\mathrm\{[A-Za-z]\}\}/g, '')
+    // Fix nested \text{...}{\text{...}} -> \text{...}
+    .replace(/\\text\{([^}]+)\}\{\\text\{([^}]+)\}\\}/g, '\\text{$1 $2}')
+    // Clean up malformed \text
+    .replace(/\\text\{([A-Za-z]+)\}\{([A-Za-z]+)\}/g, '\\text{$1$2}')
+    // Fix extra $ at end of math
+    .replace(/\$(\\\(.*?\\\))\$/g, '$1')
+    // Ensure proper inline math delimiters
+    .replace(/\$(.+?)\$/g, '\\($1\\)')
+    // Fix display math
+    .replace(/\$\$(.+?)\$\$/gs, '$$$1$$')
+    // Clean up \mathrm abuse
+    .replace(/\\mathrm\{(\\[a-zA-Z]+)\}/g, '$1')
+    // Fix spacing in fractions
+    .replace(/\\frac\{\s*(\S+)\s*\}\{\s*(\S+)\s*\}/g, '\\frac{$1}{$2}')
+    // Remove duplicate backslashes
+    .replace(/\\\\\\/g, '\\')
+    .trim();
+}
+
 function formatMath(content) {
   const links = [];
   const codeBlocks = [];
@@ -121,6 +233,12 @@ function formatMath(content) {
   
   // Protect markdown tables (lines starting with | and having header separators)
   content = content.replace(/(\|.*\|[\s]*\n\|[-:\s|]+\|[\s]*\n(\|.*\|[\s]*\n)*)/g, (table) => {
+    tables.push(table);
+    return `__TABLE__${tables.length - 1}__`;
+  });
+  
+  // Protect HTML tables
+  content = content.replace(/(<table[\s\S]*?<\/table>)/gi, (table) => {
     tables.push(table);
     return `__TABLE__${tables.length - 1}__`;
   });
@@ -143,17 +261,28 @@ function formatMath(content) {
     return `__LINK__${links.length - 1}__`;
   });
 
+  // Convert simple math patterns to LaTeX
   content = content
     .replace(/\[\s*(.*?)\s*\]/gs, '\\($1\\)')
     .replace(/\(\s*(.*?)\s*\)/gs, '\\($1\\)')
     .replace(/([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g, '\\($1^{$2}\\)')
     .replace(/(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g, '\\(\\frac{$1}{$2}\\)');
 
+  // Clean up any malformed LaTeX
+  content = cleanMathLaTeX(content);
+
   // Restore links
   content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
   
-  // Restore tables
-  content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  // Restore tables (both markdown and HTML)
+  content = content.replace(/__TABLE__(\d+)__/g, (_, i) => {
+    const table = tables[i];
+    // If it's an HTML table, ensure proper structure
+    if (table.trim().startsWith('<table')) {
+      return table.replace(/<td>(&nbsp;|\s)*<\/td>/g, '<td></td>');
+    }
+    return table;
+  });
   
   // Restore code blocks
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => {
