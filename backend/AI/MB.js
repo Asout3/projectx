@@ -1,4 +1,4 @@
-// AI/MB.js – NATURAL VERSION: No forced programming logic, let AI be smart
+// AI/MB.js – CORRECTED NATURAL VERSION: No forced programming logic, complete with TOC
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -281,40 +281,76 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   }
 }
 
-// ==================== SIMPLIFIED CHAPTER GENERATION ====================
-// REMOVED: isProgrammingTopic, detectLanguage, forced code structure
-async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
-  // Natural prompt that lets AI choose appropriate examples
-  const promptStructure = `
-- Structure:
-  1) Short intro (50-80 words) - NO heading
-  2) ## Concepts — explain key ideas (200-300 words)
-  3) ### ${chapterInfo.subtopics[0]} — Detailed explanation with relevant examples
-  4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
-  5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions
-  6) ### Exercise — 1 short question
-  7) ### Solution — Clear answer to the exercise
-  End with "Further reading:" and 2 references.`;
+// ==================== TOC GENERATION (FIX) ====================
+async function generateTOC(bookTopic, userId) {
+  const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
+REQUIREMENTS (FOLLOW EXACTLY):
+- Output EXACTLY 10 chapters
+- Use the format: "Chapter X: Title" on its own line
+- Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
+- NO extra text, NO explanations, NO markdown
+- Make titles descriptive and unique
+- Example format:
+Chapter 1: Getting Started
+   - Core Concepts
+   - Practical Steps
+   - Common Mistakes
+[... continues to Chapter 10]`;
 
+  let attempts = 0;
+
+  while (attempts < 5) {
+    const genOptions = { maxOutputTokens: 1000, temperature: 0.3, topP: 0.8 };
+    try {
+      const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
+      
+      logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC.substring(0, 500)}...`);
+      
+      const cleaned = cleanUpAIText(rawTOC);
+      const parsed = parseTOC(cleaned);
+
+      if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
+        logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
+        return { raw: cleaned, parsed };
+      }
+      
+      logger.warn(`❌ TOC invalid – attempt ${attempts + 1}: Got ${parsed.length} chapters`);
+    } catch (e) {
+      logger.error(`❌ TOC AI error – attempt ${attempts + 1}: ${e.message}`);
+    }
+    attempts++;
+  }
+
+  logger.warn(`⚠️ TOC failed after 5 attempts – using fallback for "${bookTopic}"`);
+  return generateFallbackTOC(bookTopic);
+}
+
+// ==================== CHAPTER GENERATION ====================
+// REMOVED: All forced programming detection and language injection
+async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+  // Natural, flexible prompt that lets AI choose appropriate examples
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
+
+STRUCTURE:
+1) Short intro (50-80 words) - NO heading
+2) ## Concepts — explain key ideas (200-300 words)
+3) ### ${chapterInfo.subtopics[0]} — Detailed explanation with relevant examples
+4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
+5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions
+6) ### Exercise — 1 short question
+7) ### Solution — Clear answer to the exercise
+End with "Further reading:" and 2 references.
+
 CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
-- Use ### for ALL subsections (including the three listed above)
-- ALL tables MUST use strict GitHub Markdown table syntax:
-  | Column A | Column B |
-  |----------|----------|
-  | value    | value    |
-- Do NOT use lists, bullets, dashes, colons, or anything else to simulate tables.
-- Never output "Action - Result" or "A | B" without a proper header + divider line.
+- Use ### for ALL subsections
+- ALL tables MUST use strict GitHub Markdown table syntax with header and divider
 - Use blockquotes (>) for important notes or definitions
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
-- Use examples appropriate to the topic: 
-  * For technical topics (programming, math, engineering), code examples are welcome
-  * For non-technical topics (psychology, history, art), use real-world scenarios, case studies, or analogies
+- Use examples appropriate to the topic type (code for tech, scenarios for non-tech)
 - 500+ words total
-${promptStructure}
 - Output ONLY the chapter content.`;
 
   const rawContent = cleanUpAIText(await askAI(prompt, userId, bookTopic, {
@@ -322,7 +358,7 @@ ${promptStructure}
     genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
   }));
   
-  // Light sanitization - only removes obvious malformations, not semantic content
+  // Light sanitization - only removes obvious malformations
   return sanitizeContent(rawContent, chapterInfo.title);
 }
 
@@ -331,7 +367,7 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   const prompt = `Write a professional conclusion for "${bookTopic}".
 Summarize these key topics: ${titles}
 Include 3-5 authoritative resources with descriptions.
-300-350 words, formal tone, no code unless the topic is technical.`;
+300-350 words, formal tone.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1200,
@@ -340,23 +376,17 @@ Include 3-5 authoritative resources with descriptions.
 }
 
 // ==================== LIGHT SANITIZATION ====================
-// Only cleans up obvious artifacts, doesn't enforce topic rules
 function sanitizeContent(content, chapterTitle) {
   let cleaned = content;
   
-  // Remove empty or malformed code blocks that contain no actual code
+  // Remove empty code blocks
   cleaned = cleaned.replace(/```\s*\n\s*```/g, '');
   
-  // Remove code blocks that only contain "package main" or similar minimal artifacts
+  // Remove malformed code blocks that contain only syntax artifacts
   cleaned = cleaned.replace(/```[\w]*\n\s*(package\s+\w+|import\s+"[^"]+"|func\s+\w+|\{|\})\s*\n```/g, '');
   
-  // Clean up excessive syntax characters (but only if they appear in isolation)
+  // Clean up isolated syntax characters
   cleaned = cleaned.replace(/\n[{}();]+\n/g, '\n\n');
-  
-  // Log if we cleaned anything
-  if (cleaned !== content) {
-    logger.debug(`🧹 Cleaned up minor artifacts in "${chapterTitle}"`);
-  }
   
   return cleaned.trim();
 }
@@ -441,59 +471,6 @@ function buildEnhancedHTML(content, bookTitle) {
   <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
 </body>
 </html>`;
-}
-
-async function generatePDF(content, outputPath, bookTitle) {
-  try {
-    const enhancedHtml = buildEnhancedHTML(content, bookTitle);
-    
-    const form = new FormData();
-    const instructions = {
-      parts: [{ html: "index.html" }],
-      output: {
-        format: "pdf",
-        pdf: {
-          margin: { top: "90px", bottom: "80px", left: "70px", right: "70px" },
-          header: {
-            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
-            spacing: "5mm"
-          },
-          footer: {
-            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
-            spacing: "5mm"
-          },
-          waitDelay: 3000,
-          printBackground: true,
-          preferCSSPageSize: true
-        }
-      }
-    };
-    
-    form.append('instructions', JSON.stringify(instructions));
-    form.append('index.html', Buffer.from(enhancedHtml), {
-      filename: 'index.html',
-      contentType: 'text/html'
-    });
-
-    const response = await fetch('https://api.nutrient.io/build', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
-      body: form
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
-    }
-
-    const pdfBuffer = await response.buffer();
-    fs.writeFileSync(outputPath, pdfBuffer);
-    logger.info(`✅ PDF generated: ${outputPath}`);
-    return outputPath;
-  } catch (error) {
-    logger.error(`❌ PDF generation failed: ${error.message}`);
-    throw error;
-  }
 }
 
 // ==================== MAIN GENERATOR ====================
@@ -581,7 +558,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
