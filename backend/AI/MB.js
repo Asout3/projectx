@@ -1,4 +1,4 @@
-// AI/MB.js – FIXED VERSION: No unwanted code in non-programming books
+// AI/MB.js – NATURAL VERSION: No forced programming logic, let AI be smart
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -54,42 +54,6 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// ==================== TOPIC DETECTION ====================
-// ENHANCED: More comprehensive keyword detection
-function isProgrammingTopic(topic) {
-  const programmingKeywords = [
-    'programming', 'code', 'development', 'software', 'tutorial', 'guide',
-    'javascript', 'python', 'java', 'scala', 'cpp', 'c++', 'csharp', 'c#',
-    'typescript', 'ts', 'react', 'node', 'web', 'api', 'database',
-    'algorithm', 'data structure', 'function', 'class', 'object', 'variable',
-    'loop', 'conditional', 'module', 'library', 'framework', 'syntax',
-    'golang', 'pytorch', 'tensorflow', 'machine learning', 'deep learning',
-    'reactjs', 'nodejs', 'express', 'django', 'flask', 'spring', 'angular',
-    'vue', 'svelte', 'git', 'docker', 'kubernetes', 'cloud', 'aws', 'azure'
-  ];
-  
-  const lowerTopic = topic.toLowerCase();
-  return programmingKeywords.some(keyword => lowerTopic.includes(keyword));
-}
-
-// ENHANCED: Returns null for non-programming topics
-function detectLanguage(topic) {
-  const langMap = {
-    'python': 'python', 'javascript': 'javascript', 'js': 'javascript',
-    'java': 'java', 'scala': 'scala', 'cpp': 'cpp', 'c++': 'cpp',
-    'csharp': 'csharp', 'c#': 'csharp', 'go': 'go', 'rust': 'rust',
-    'golang': 'go', 'typescript': 'typescript', 'ts': 'typescript', 'react': 'jsx'
-  };
-  
-  const lowerTopic = topic.toLowerCase();
-  for (const [key, lang] of Object.entries(langMap)) {
-    if (lowerTopic.includes(key)) return lang;
-  }
-  
-  // Return null for non-programming topics (crucial for sanitization logic)
-  return isProgrammingTopic(topic) ? 'python' : null;
-}
-
 // ==================== TEXT PROCESSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
@@ -109,7 +73,6 @@ function cleanUpAIText(text) {
     .trim();
 }
 
-// ENHANCED: Better math formatting with table protection
 function formatMath(content) {
   const tables = [];
   const codeBlocks = [];
@@ -137,10 +100,8 @@ function formatMath(content) {
   content = content.replace(/\b([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)\b/g, '\\($1^{$2}\\)');
   content = content.replace(/\b(\d+)e(\d+)\b/gi, '\\($1 \\\\times 10^{$2}\\)');
 
-  // Restore tables
+  // Restore tables and code
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
-
-  // Restore code blocks
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
 
   return content;
@@ -189,7 +150,6 @@ function deleteFile(filePath) {
   }
 }
 
-// ==================== TOC PARSER ====================
 function parseTOC(tocContent) {
   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
   const chapters = [];
@@ -321,128 +281,17 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   }
 }
 
-// ==================== CONTENT GENERATION ====================
-async function generateTOC(bookTopic, userId) {
-  const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
-REQUIREMENTS (FOLLOW EXACTLY):
-- Output EXACTLY 10 chapters
-- Use the format: "Chapter X: Title" on its own line
-- Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
-- NO extra text, NO explanations, NO markdown
-- Make titles descriptive and unique
-- Example format:
-Chapter 1: Getting Started
-   - Core Concepts
-   - Practical Steps
-   - Common Mistakes
-[... continues to Chapter 10]`;
-
-  let attempts = 0;
-  let lastRaw = '';
-
-  while (attempts < 5) {
-    const genOptions = { maxOutputTokens: 1000, temperature: 0.3, topP: 0.8 };
-    try {
-      const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
-      lastRaw = rawTOC;
-      
-      logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC.substring(0, 500)}...`);
-      
-      const cleaned = cleanUpAIText(rawTOC);
-      const parsed = parseTOC(cleaned);
-
-      if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
-        logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
-        return { raw: cleaned, parsed };
-      }
-      
-      logger.warn(`❌ TOC invalid – attempt ${attempts + 1}: Got ${parsed.length} chapters`);
-    } catch (e) {
-      logger.error(`❌ TOC AI error – attempt ${attempts + 1}: ${e.message}`);
-    }
-    attempts++;
-  }
-
-  logger.warn(`⚠️ TOC failed after 5 attempts – using fallback for "${bookTopic}"`);
-  return generateFallbackTOC(bookTopic);
-}
-
-// ==================== NEW: SANITIZATION FUNCTION ====================
-// This is the critical fix that removes unwanted code from non-programming chapters
-function sanitizeContent(content, isProgramming, chapterTitle) {
-  if (isProgramming) {
-    logger.debug(`📘 Chapter "${chapterTitle}" is programming topic - keeping code`);
-    return content;
-  }
-  
-  let cleaned = content;
-  
-  // Remove fenced code blocks (```code```)
-  const fencedBefore = (cleaned.match(/```/g) || []).length;
-  cleaned = cleaned.replace(/```[\w]*\n[\s\S]*?\n```/g, '');
-  const fencedAfter = (cleaned.match(/```/g) || []).length;
-  
-  // Remove inline code backticks but preserve the text
-  cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
-  
-  // Remove common programming artifacts that might slip through
-  const codePatterns = [
-    /package\s+\w+\s*;/g,
-    /import\s+[\w".]+\s*;/g,
-    /func\s+\w+\s*\([^)]*\)\s*\{/g,
-    /public\s+static\s+void\s+main/g,
-    /def\s+\w+\s*\([^)]*\)\s*:/g,
-    /class\s+\w+\s*\{/g,
-    /fmt\.Print\w*\(/g,
-    /console\.log\(/g,
-    /println!\(/g
-  ];
-  
-  let artifactsFound = false;
-  codePatterns.forEach(pattern => {
-    if (pattern.test(cleaned)) {
-      cleaned = cleaned.replace(pattern, '');
-      artifactsFound = true;
-    }
-  });
-  
-  // Log if we removed any code
-  if (fencedBefore > 0 || artifactsFound) {
-    logger.warn(`⚠️ Stripped ${fencedBefore > 0 ? 'code blocks' : 'code artifacts'} from non-programming chapter "${chapterTitle}"`);
-  }
-  
-  // Clean up any leftover syntax characters and normalize whitespace
-  cleaned = cleaned.replace(/[{}();]/g, '');
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-  
-  return cleaned.trim();
-}
-
-// ==================== FIXED: CHAPTER GENERATION ====================
+// ==================== SIMPLIFIED CHAPTER GENERATION ====================
+// REMOVED: isProgrammingTopic, detectLanguage, forced code structure
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
-  const language = detectLanguage(bookTopic);
-  const isProgramming = isProgrammingTopic(bookTopic);
-  
-  // Build dynamic structure based on topic type
-  let promptStructure = `
+  // Natural prompt that lets AI choose appropriate examples
+  const promptStructure = `
 - Structure:
   1) Short intro (50-80 words) - NO heading
-  2) ## Concepts — explain key ideas (200-300 words)`;
-  
-  if (isProgramming) {
-    promptStructure += `
-  3) ### ${chapterInfo.subtopics[0]} — Show ${language || ''} code with explanation (include fenced code block)
-  4) ### ${chapterInfo.subtopics[1]} — Practical ${language || ''} snippet with context
-  5) ### ${chapterInfo.subtopics[2]} — Common pitfalls and solutions`;
-  } else {
-    // EXPLICIT ANTI-CODE INSTRUCTIONS
-    promptStructure += `
-  3) ### ${chapterInfo.subtopics[0]} — Detailed real-world scenario or case study (NO CODE ALLOWED)
-  4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance (NO CODE ALLOWED)
-  5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions (NO CODE ALLOWED)`;
-  }
-  
-  promptStructure += `
+  2) ## Concepts — explain key ideas (200-300 words)
+  3) ### ${chapterInfo.subtopics[0]} — Detailed explanation with relevant examples
+  4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
+  5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions
   6) ### Exercise — 1 short question
   7) ### Solution — Clear answer to the exercise
   End with "Further reading:" and 2 references.`;
@@ -461,22 +310,20 @@ CRITICAL FORMATTING RULES:
 - Use blockquotes (>) for important notes or definitions
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
-- ${isProgramming ? 'INCLUDE code examples where appropriate' : 'DO NOT include ANY code examples, code snippets, or programming syntax - this is a non-technical topic for general readers. Use analogies, case studies, and real-world examples instead.'}
+- Use examples appropriate to the topic: 
+  * For technical topics (programming, math, engineering), code examples are welcome
+  * For non-technical topics (psychology, history, art), use real-world scenarios, case studies, or analogies
 - 500+ words total
 ${promptStructure}
 - Output ONLY the chapter content.`;
 
-  // Generate with lower temperature for non-programming topics
   const rawContent = cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1800,
-    genOptions: { 
-      maxOutputTokens: 3500, 
-      temperature: isProgramming ? 0.4 : 0.2  // Less creative for non-tech
-    }
+    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
   }));
   
-  // CRITICAL: Sanitize content to remove any code that slipped through
-  return sanitizeContent(rawContent, isProgramming, chapterInfo.title);
+  // Light sanitization - only removes obvious malformations, not semantic content
+  return sanitizeContent(rawContent, chapterInfo.title);
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
@@ -484,12 +331,34 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   const prompt = `Write a professional conclusion for "${bookTopic}".
 Summarize these key topics: ${titles}
 Include 3-5 authoritative resources with descriptions.
-300-350 words, formal tone, ${isProgrammingTopic(bookTopic) ? 'code examples allowed if relevant' : 'NO code examples'}.`;
+300-350 words, formal tone, no code unless the topic is technical.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1200,
     genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
   }));
+}
+
+// ==================== LIGHT SANITIZATION ====================
+// Only cleans up obvious artifacts, doesn't enforce topic rules
+function sanitizeContent(content, chapterTitle) {
+  let cleaned = content;
+  
+  // Remove empty or malformed code blocks that contain no actual code
+  cleaned = cleaned.replace(/```\s*\n\s*```/g, '');
+  
+  // Remove code blocks that only contain "package main" or similar minimal artifacts
+  cleaned = cleaned.replace(/```[\w]*\n\s*(package\s+\w+|import\s+"[^"]+"|func\s+\w+|\{|\})\s*\n```/g, '');
+  
+  // Clean up excessive syntax characters (but only if they appear in isolation)
+  cleaned = cleaned.replace(/\n[{}();]+\n/g, '\n\n');
+  
+  // Log if we cleaned anything
+  if (cleaned !== content) {
+    logger.debug(`🧹 Cleaned up minor artifacts in "${chapterTitle}"`);
+  }
+  
+  return cleaned.trim();
 }
 
 // ==================== PDF GENERATION ====================
@@ -712,8 +581,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
