@@ -391,7 +391,7 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   }
 }
 
-// ==================== CONTENT GENERATION ====================
+// ==================== CONTENT GENERATION ==================== where is theerrr
 async function generateTOC(bookTopic, userId) {
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 REQUIREMENTS (FOLLOW EXACTLY):
