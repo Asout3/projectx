@@ -35,7 +35,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.0-flash-lite';   //gemini-2.5-flash-preview-09-2025
+const MODEL_NAME = 'gemini-2.5-flash-preview-09-2025'   //gemini-2.5-flash-preview-09-2025 gemini-2.0-flash-lite';
 const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo';
 const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
 
