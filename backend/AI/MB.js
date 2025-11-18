@@ -537,7 +537,7 @@ export async function generateBookMedd(rawTopic, userId) {
     // Format TOC for PDF
     const formattedTOC = chapterInfos.map((ch, i) => {
       const num = i + 1;
-      return `${num}. ${ch.title}\n${ch subtopics.map(s => `   - ${s}`).join('\n')}`;
+      return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
     }).join('\n\n');
     
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
