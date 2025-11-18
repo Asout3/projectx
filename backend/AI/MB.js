@@ -55,33 +55,33 @@ fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // ==================== TOPIC DETECTION ====================
-function isProgrammingTopic(topic) {
-  const programmingKeywords = [
-    'programming', 'code', 'development', 'software', 'tutorial', 'guide',
-    'javascript', 'python', 'java', 'scala', 'cpp', 'c++', 'csharp', 'c#',
-    'typescript', 'ts', 'react', 'node', 'web', 'api', 'database',
-    'algorithm', 'data structure', 'function', 'class', 'object', 'variable',
-    'loop', 'conditional', 'module', 'library', 'framework', 'syntax'
-  ];
+// function isProgrammingTopic(topic) {
+//   const programmingKeywords = [
+//     'programming', 'code', 'development', 'software', 'tutorial', 'guide',
+//     'javascript', 'python', 'java', 'scala', 'cpp', 'c++', 'csharp', 'c#',
+//     'typescript', 'ts', 'react', 'node', 'web', 'api', 'database',
+//     'algorithm', 'data structure', 'function', 'class', 'object', 'variable',
+//     'loop', 'conditional', 'module', 'library', 'framework', 'syntax'
+//   ];
   
-  const lowerTopic = topic.toLowerCase();
-  return programmingKeywords.some(keyword => lowerTopic.includes(keyword));
-}
+//   const lowerTopic = topic.toLowerCase();
+//   return programmingKeywords.some(keyword => lowerTopic.includes(keyword));
+// }
 
-function detectLanguage(topic) {
-  const langMap = {
-    'python': 'python', 'javascript': 'javascript', 'js': 'javascript',
-    'java': 'java', 'scala': 'scala', 'cpp': 'cpp', 'c++': 'cpp',
-    'csharp': 'csharp', 'c#': 'csharp', 'go': 'go', 'rust': 'rust',
-    'typescript': 'typescript', 'ts': 'typescript', 'react': 'jsx'
-  };
+// function detectLanguage(topic) {
+//   const langMap = {
+//     'python': 'python', 'javascript': 'javascript', 'js': 'javascript',
+//     'java': 'java', 'scala': 'scala', 'cpp': 'cpp', 'c++': 'cpp',
+//     'csharp': 'csharp', 'c#': 'csharp', 'go': 'go', 'rust': 'rust',
+//     'typescript': 'typescript', 'ts': 'typescript', 'react': 'jsx'
+//   };
   
-  const lowerTopic = topic.toLowerCase();
-  for (const [key, lang] of Object.entries(langMap)) {
-    if (lowerTopic.includes(key)) return lang;
-  }
-  return 'java';
-}
+//   const lowerTopic = topic.toLowerCase();
+//   for (const [key, lang] of Object.entries(langMap)) {
+//     if (lowerTopic.includes(key)) return lang;
+//   }
+//   return 'java';
+// }
 
 // ==================== TEXT PROCESSING ====================
 function cleanUpAIText(text) {
@@ -440,49 +440,87 @@ Chapter 1: Getting Started
 /**
  * FINAL FIX: Dynamic structure, NO duplicate headers, PROPER subtopic integration
  */
-async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
-  const language = detectLanguage(bookTopic);
-  const isProgramming = isProgrammingTopic(bookTopic);
+// async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+//   const language = detectLanguage(bookTopic);
+//   const isProgramming = isProgrammingTopic(bookTopic);
   
-  // Build dynamic structure based on topic type
-  let promptStructure = `
-- Structure:
-  1) Short intro (50-80 words) - NO heading
-  2) ## Concepts — explain key ideas (200-300 words)`;
+//   // Build dynamic structure based on topic type
+//   let promptStructure = `
+// - Structure:
+//   1) Short intro (50-80 words) - NO heading
+//   2) ## Concepts — explain key ideas (200-300 words)`;
   
-  if (isProgramming) {
-    promptStructure += `
-  3) ### ${chapterInfo.subtopics[0]} — Show ${language} code with explanation (include fenced code block)
-  4) ### ${chapterInfo.subtopics[1]} — Practical ${language} snippet with context
-  5) ### ${chapterInfo.subtopics[2]} — Common pitfalls and solutions`;
-  } else {
-    promptStructure += `
-  3) ### ${chapterInfo.subtopics[0]} — Detailed real-world scenario or case study
-  4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
-  5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions`;
-  }
+//   if (isProgramming) {
+//     promptStructure += `
+//   3) ### ${chapterInfo.subtopics[0]} — Show ${language} code with explanation (include fenced code block)
+//   4) ### ${chapterInfo.subtopics[1]} — Practical ${language} snippet with context
+//   5) ### ${chapterInfo.subtopics[2]} — Common pitfalls and solutions`;
+//   } else {
+//     promptStructure += `
+//   3) ### ${chapterInfo.subtopics[0]} — Detailed real-world scenario or case study
+//   4) ### ${chapterInfo.subtopics[1]} — Practical application with step-by-step guidance
+//   5) ### ${chapterInfo.subtopics[2]} — Common challenges and proven solutions`;
+//   }
   
-  promptStructure += `
-  6) ### Exercise — 1 short question
-  7) ### Solution — Clear answer to the exercise
-  End with "Further reading:" and 2 references.`;
+//   promptStructure += `
+//   6) ### Exercise — 1 short question
+//   7) ### Solution — Clear answer to the exercise
+//   End with "Further reading:" and 2 references.`;
 
+//   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
+// CRITICAL FORMATTING RULES:
+// - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
+// - Do NOT repeat the title as a second heading
+// - Use ### for ALL subsections (including the three listed above)
+// - ALL tables MUST use strict GitHub Markdown table syntax:
+//   | Column A | Column B |
+//   |----------|----------|
+//   | value    | value    |
+// - Do NOT use lists, bullets, dashes, colons, or anything else to simulate tables.
+// - Never output "Action - Result" or "A | B" without a proper header + divider line.
+// - Use blockquotes (>) for important notes or definitions
+// - NO trailing asterisks (*) on any lines
+// - NO HTML tags like <header> or <footer>
+// - 500+ words total
+// ${promptStructure}
+// - Output ONLY the chapter content.`;
+
+//   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
+//     minLength: 1800,
+//     genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
+//   }));
+// }
+
+async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
+
 CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
-- Use ### for ALL subsections (including the three listed above)
+- Use ### for ALL subsections
 - ALL tables MUST use strict GitHub Markdown table syntax:
   | Column A | Column B |
   |----------|----------|
   | value    | value    |
-- Do NOT use lists, bullets, dashes, colons, or anything else to simulate tables.
-- Never output "Action - Result" or "A | B" without a proper header + divider line.
+- Include content that naturally fits the topic
+- Use code examples ONLY when they genuinely help explain technical concepts
+- If you include code, use proper fenced code blocks with language specification
+- Use tables when they help organize information clearly
 - Use blockquotes (>) for important notes or definitions
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
 - 500+ words total
-${promptStructure}
+
+CONTENT STRUCTURE:
+1) Introduction explaining the chapter's focus
+2) Clear explanations of key concepts
+3) Practical examples or case studies (use code only if technical)
+4) Common challenges and solutions
+5) Exercise with solution
+6) Further reading references
+
+Let the content flow naturally and use the most appropriate format for each section.
+
 - Output ONLY the chapter content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
@@ -491,12 +529,29 @@ ${promptStructure}
   }));
 }
 
+// async function generateConclusion(bookTopic, chapterInfos, userId) {
+//   const titles = chapterInfos.map(c => c.title).join(', ');
+//   const prompt = `Write a professional conclusion for "${bookTopic}".
+// Summarize these key topics: ${titles}
+// Include 3-5 authoritative resources with descriptions.
+// 300-350 words, formal tone, no code examples.`;
+
+//   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
+//     minLength: 1200,
+//     genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
+//   }));
+// }
+
 async function generateConclusion(bookTopic, chapterInfos, userId) {
   const titles = chapterInfos.map(c => c.title).join(', ');
-  const prompt = `Write a professional conclusion for "${bookTopic}".
+  const prompt = `Write a professional conclusion for a book about "${bookTopic}".
 Summarize these key topics: ${titles}
 Include 3-5 authoritative resources with descriptions.
-300-350 words, formal tone, no code examples.`;
+
+Use natural language and focus on summarizing the core concepts.
+300-350 words, formal tone.
+
+Output ONLY the conclusion content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1200,
