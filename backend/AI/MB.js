@@ -390,7 +390,8 @@ async function generatePDF(content, outputPath, bookTitle) {
     form.append('instructions', JSON.stringify(instructions));
     form.append('index.html', Buffer.from(enhancedHtml), { filename: 'index.html', contentType: 'text/html' });
 
-    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    //const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    const response = await fetch('https://api.nutrient.io/build', {  
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
