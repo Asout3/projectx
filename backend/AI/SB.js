@@ -1,4 +1,4 @@
-// AI/MB.js – 5 SUPER-DETAILED CHAPTERS VERSION
+// AI/MB.js – FINAL FIXED VERSION: 5 Chapters, Subtopics Enforced
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -35,7 +35,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-lite';
+const MODEL_NAME = 'gemini-2.0-flash-lite'; // Updated model name if needed
 const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo';
 const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
 
@@ -77,27 +77,32 @@ function formatMath(content) {
   const tables = [];
   const codeBlocks = [];
 
+  // Protect tables (GitHub-style)
   content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
     tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
 
+  // Protect fenced code
   content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
+  // Protect inline code
   content = content.replace(/`([^`]+)`/g, (match) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  content = content
-    .replace(/\b(\d+)\s*\/\s*(\d+)\b/g, '\\(\\\\frac{$1}{$2}\\\\)')
-    .replace(/\b([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)\b/g, '\\($1^{$2}\\)')
-    .replace(/\b(\d+)e(\d+)\b/gi, '\\($1 \\times 10^{$2}\\)');
+  // ======== FIX MATH ========
+  content = content.replace(/\b(\d+)\s*\/\s*(\d+)\b/g, '\\(\\\\frac{$1}{$2}\\\\)');
+  content = content.replace(/\b([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)\b/g, '\\($1^{$2}\\)');
+  content = content.replace(/\b(\d+)e(\d+)\b/gi, '\\($1 \\times 10^{$2}\\)');
 
+  // Restore tables
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  // Restore code blocks
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
 
   return content;
@@ -154,6 +159,7 @@ function parseTOC(tocContent) {
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
+    
     if (!line) continue;
 
     if (line.length === 1 && /^[A-Z]$/.test(line) && i + 1 < lines.length) {
@@ -188,18 +194,21 @@ function parseTOC(tocContent) {
 
   const valid = chapters.filter(c => c.subtopics.length >= 3);
   logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
-  return valid.slice(0, 5); // LIMIT TO 5 CHAPTERS
+  
+  // <--- CHANGED: Changed from 10 to 5 to force limit
+  return valid.slice(0, 5); 
 }
 
 function generateFallbackTOC(bookTopic) {
   const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
   
+  // <--- CHANGED: Reduced fallback to 5 chapters
   const base = [
-    "Comprehensive Foundation and Core Principles",
-    "Deep Dive into Essential Systems and Mechanisms", 
-    "Advanced Applications and Real-World Implementation",
-    "Complex Problem-Solving and Optimization Strategies",
-    "Expert-Level Analysis and Future Perspectives"
+    "Introduction to Core Concepts",
+    "Essential Principles and Practices", 
+    "Understanding Key Systems",
+    "Practical Applications and Techniques",
+    "Advanced Topics and Future Trends"
   ];
   
   const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
@@ -208,14 +217,14 @@ function generateFallbackTOC(bookTopic) {
   const chapters = base.map((t, i) => ({
     title: `${t}${suffix}`,
     subtopics: [
-      "In-depth exploration of fundamental concepts with detailed examples",
-      "Comprehensive practical applications including edge cases and nuances",
-      "Thorough analysis of challenges, solutions, and advanced techniques"
+      "Understanding the core concept",
+      "Practical applications",
+      "Common challenges and how to address them"
     ]
   }));
   
   const raw = chapters.map(c =>
-    `${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
+    `${c.title}\n${c.subtopics.map(s => `    - ${s}`).join('\n')}`
   ).join('\n');
   
   return { raw, parsed: chapters };
@@ -238,6 +247,10 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
         reply = await result.response.text();
       } else if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
         reply = result.candidates[0].content.parts[0].text;
+      } else if (result.output && Array.isArray(result.output)) {
+        reply = result.output.map(o => (o?.content || o?.text || '')).join('\n');
+      } else if (result.text) {
+        reply = result.text;
       }
       
       reply = (reply || '').toString().trim();
@@ -270,23 +283,20 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
 
 // ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
-  const prompt = `Create a DETAILED table of contents for a comprehensive book about "${bookTopic}".
-REQUIREMENTS:
-- Output EXACTLY 5 chapters (each chapter will be extensive)
-- Use format: "Chapter X: Title" on its own line
-- Follow each with 4-6 subtopics, indented: "   - Subtopic"
+  // <--- CHANGED: Requested EXACTLY 5 chapters in prompt
+  const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
+REQUIREMENTS (FOLLOW EXACTLY):
+- Output EXACTLY 5 chapters
+- Use the format: "Chapter X: Title" on its own line
+- Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
 - NO extra text, NO explanations, NO markdown
-- Chapter titles must be comprehensive and specific
-- Subtopics should allow for deep exploration
-
-Example:
-Chapter 1: Comprehensive Foundations
-   - Core theoretical framework
-   - Historical context and evolution
-   - Practical implementation basics
-   - Common misconceptions
-   - Key terminology
-Chapter 2: [Next major area...]`;
+- Make titles descriptive and unique
+- Example format:
+Chapter 1: Getting Started
+   - Core Concepts
+   - Practical Steps
+   - Common Mistakes
+[... continues to Chapter 5]`;
 
   let attempts = 0;
   let lastRaw = '';
@@ -296,11 +306,13 @@ Chapter 2: [Next major area...]`;
     try {
       const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
       lastRaw = rawTOC;
+      
       logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC.substring(0, 500)}...`);
       
       const cleaned = cleanUpAIText(rawTOC);
       const parsed = parseTOC(cleaned);
 
+      // <--- CHANGED: Validation check for 5 chapters
       if (parsed.length === 5 && parsed.every(c => c.subtopics.length >= 3)) {
         logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
         return { raw: cleaned, parsed };
@@ -318,64 +330,58 @@ Chapter 2: [Next major area...]`;
 }
 
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+  // <--- CHANGED: Extract subtopics into a list string
+  const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
+
+  // <--- CHANGED: Updated prompt to enforce specific subtopics
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
 - Use ### for ALL subsections
-- ALL tables MUST use strict GitHub Markdown table syntax:
-  | Column A | Column B |
-  |----------|----------|
-  | value    | value    |
-- Use code examples ONLY when they help explain technical concepts
-- Include code in proper fenced blocks with language specification
-- Use tables to organize complex information
-- Use blockquotes (>) for important notes and definitions
+- ALL tables MUST use strict GitHub Markdown table syntax
 - NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
+- 600+ words total
 
-CONTENT REQUIREMENTS:
-- **1500+ words** (this is a DEEP DIVE chapter)
-- Provide comprehensive coverage of the topic
-- Include multiple detailed examples and case studies
-- Explore edge cases, nuances, and advanced considerations
-- Explain the "why" behind concepts, not just the "how"
-- Compare different approaches with pros/cons
-- Address common mistakes and how to avoid them
-- Include practical exercises with detailed solutions
+MANDATORY CONTENT STRUCTURE:
+1) Introduction: A brief overview of the chapter.
+2) KEY SECTIONS: You MUST create a specific subsection (### Heading) for EACH of the following subtopics:
+${subtopicList}
 
-STRUCTURE:
-1) Introduction establishing chapter scope and importance
-2) Deep exploration of each subtopic with rich detail
-3) Multiple practical examples with thorough explanations
-4) Comparison of methods/approaches where relevant
-5) Common pitfalls with detailed prevention strategies
-6) Advanced considerations for mastery
-7) Comprehensive exercise with step-by-step solution
-8) Curated further reading with detailed annotations
+3) Practical Application/Exercise: A real-world example or exercise.
+4) Further Reading: 2-3 references.
 
-- Output ONLY the chapter content.`;
+INSTRUCTIONS:
+- For each subtopic listed above, explain it in detail.
+- Use code examples ONLY if the topic is technical (programming/data).
+- If writing code, use fenced code blocks like \`\`\`python or \`\`\`javascript.
+- Use tables when comparing items.
+- Ensure the flow is natural between subtopics.
+
+Output ONLY the chapter content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-    minLength: 4500, // INCREASED FOR DEEPER CONTENT
-    genOptions: { maxOutputTokens: 6000, temperature: 0.4 } // INCREASED TOKEN LIMIT
+    minLength: 1800,
+    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
   }));
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
   const titles = chapterInfos.map(c => c.title).join(', ');
-  const prompt = `Write a professional conclusion for a comprehensive book about "${bookTopic}".
-Summarize these key topics with depth: ${titles}
-Include 5-7 authoritative resources with detailed descriptions explaining what each offers.
+  const prompt = `Write a professional conclusion for a book about "${bookTopic}".
+Summarize these key topics: ${titles}
+Include 3-5 authoritative resources with descriptions.
 
-400-500 words, formal but engaging tone.
+Use natural language and focus on summarizing the core concepts.
+300-350 words, formal tone.
 
 Output ONLY the conclusion content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-    minLength: 1600, // INCREASED
-    genOptions: { maxOutputTokens: 2500, temperature: 0.4 }
+    minLength: 1200,
+    genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
   }));
 }
 
@@ -384,6 +390,7 @@ function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   
+  // Extract clean title for cover
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
   displayTitle = displayTitle
@@ -397,23 +404,23 @@ function buildEnhancedHTML(content, bookTitle) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
+  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
+  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
       svg: { fontCache: 'none', scale: 0.95 }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js)"></script>
+  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
@@ -434,7 +441,7 @@ function buildEnhancedHTML(content, bookTitle) {
     pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); }
     pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
     blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
-    blockquote::before { content: """; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
+    blockquote::before { content: "“"; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
     .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
     .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
     table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
@@ -449,7 +456,7 @@ function buildEnhancedHTML(content, bookTitle) {
   <div class="cover-page">
     <div class="cover-content">
       <h1 class="cover-title">Bookgen.AI</h1>
-      <h2 class="cover-subtitle">An In-Depth Guide</h2>
+      <h2 class="cover-subtitle">A Guide book</h2>
       <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
     </div>
     <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
@@ -493,7 +500,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    const response = await fetch('https://api.nutrient.io/build', {
+    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -518,12 +525,13 @@ async function generatePDF(content, outputPath, bookTitle) {
 export async function generateBookMedd(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
-  logger.info(`=== Starting 5-CHAPTER DEEP DIVE: "${bookTopic}" for ${safeUserId} ===`);
+  logger.info(`=== Starting: "${bookTopic}" for ${safeUserId} ===`);
 
   try {
     userHistories.delete(safeUserId);
     const { raw: tocRaw, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
     
+    // Format TOC for PDF
     const formattedTOC = chapterInfos.map((ch, i) => {
       const num = i + 1;
       return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
@@ -533,7 +541,8 @@ export async function generateBookMedd(rawTopic, userId) {
     saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
     const files = [tocFile];
 
-    logger.info('Step 2/3: Generating 5 SUPER-DETAILED chapters...');
+    // Generate chapters
+    logger.info('Step 2/3: Generating chapters...');
     for (let i = 0; i < chapterInfos.length; i++) {
       if (global.cancelFlags?.[safeUserId]) {
         delete global.cancelFlags[safeUserId];
@@ -542,7 +551,7 @@ export async function generateBookMedd(rawTopic, userId) {
 
       const chNum = i + 1;
       const info = chapterInfos[i];
-      logger.info(` ${chNum}. ${info.title} (deep dive mode)`);
+      logger.info(` ${chNum}. ${info.title}`);
       
       const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapter}\n\n---\n`;
@@ -552,12 +561,14 @@ export async function generateBookMedd(rawTopic, userId) {
       files.push(f);
     }
 
+    // Generate conclusion
     logger.info('Step 3/3: Generating conclusion...');
     const conclusion = await generateConclusion(bookTopic, chapterInfos, safeUserId);
     const conclFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
     saveToFile(conclFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
     files.push(conclFile);
 
+    // Combine and generate PDF
     logger.info('Combining content and generating PDF...');
     const combined = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
@@ -565,10 +576,11 @@ export async function generateBookMedd(rawTopic, userId) {
     
     await generatePDF(combined, pdfPath, bookTopic);
 
+    // Cleanup
     files.forEach(deleteFile);
     userHistories.delete(safeUserId);
     
-    logger.info(`=== SUCCESS: ${pdfPath} (5 detailed chapters) ===`);
+    logger.info(`=== SUCCESS: ${pdfPath} ===`);
     return pdfPath;
   } catch (e) {
     logger.error(`❌ Failed: ${e.message}`);
@@ -594,8 +606,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
