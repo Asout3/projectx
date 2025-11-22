@@ -9,6 +9,9 @@ import async from 'async';
 import winston from 'winston';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,8 +39,13 @@ const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
 const MODEL_NAME = 'gemini-2.5-flash-lite'   //gemini-2.5-flash-preview-09-2025 gemini-2.0-flash-lite';
-const API_KEY = 'AIzaSyB1mzRKeAnsV__6yxngqgx2pSjuMTGwruo';
-const NUTRIENT_API_KEY = 'pdf_live_162WJVSTDmuCQGjksJJXoxrbipwxrHteF8cXC9Z71gC';
+const API_KEY = process.env.GEMINI_API_KEY;
+const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
+
+if (!API_KEY) {
+  console.error("❌ FATAL ERROR: GEMINI_API_KEY is missing from .env file");
+  process.exit(1);
+}
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 const userHistories = new Map();
