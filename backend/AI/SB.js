@@ -522,7 +522,7 @@ async function generatePDF(content, outputPath, bookTitle) {
 }
 
 // ==================== MAIN GENERATOR ====================
-export async function generateBookMedd(rawTopic, userId) {
+export async function generateBookS(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
   logger.info(`=== Starting: "${bookTopic}" for ${safeUserId} ===`);
@@ -591,7 +591,7 @@ export async function generateBookMedd(rawTopic, userId) {
 // ==================== QUEUE SYSTEM ====================
 const bookQueue = async.queue(async (task, callback) => {
   try {
-    const result = await generateBookMedd(task.bookTopic, task.userId);
+    const result = await generateBookS(task.bookTopic, task.userId);
     callback(null, result);
   } catch (error) {
     callback(error);
