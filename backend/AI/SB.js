@@ -40,15 +40,18 @@ const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
 const MODEL_NAME = 'gemini-2.0-flash-lite'; // Updated model name if needed
-const API_KEY = process.env.GEMINI_API_KEY;
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
-if (!API_KEY) {
-  console.error("❌ FATAL ERROR: GEMINI_API_KEY is missing from .env file");
-  process.exit(1);
+let genAI = null;
+function ensureGenAI() {
+  if (genAI) return genAI;
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error('GEMINI_API_KEY is not set in environment. Configure it in your deployment or .env file.');
+  }
+  genAI = new GoogleGenerativeAI(key);
+  return genAI;
 }
-
-const genAI = new GoogleGenerativeAI(API_KEY);
 const userHistories = new Map();
 
 const logger = winston.createLogger({
@@ -244,7 +247,7 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   await globalRateLimiter.wait();
 
   const genCfg = options.genOptions || { maxOutputTokens: 4000, temperature: 0.7, topP: 0.9 };
-  const model = genAI.getGenerativeModel({ model: MODEL_NAME, generationConfig: genCfg });
+  const model = ensureGenAI().getGenerativeModel({ model: MODEL_NAME, generationConfig: genCfg });
 
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
