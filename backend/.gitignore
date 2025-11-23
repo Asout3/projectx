@@ -1,3 +1,56 @@
-node_modules
+# Node modules
+node_modules/
+
+# Environment variables / secrets
 .env
+.env.*    # ignore all env variants (e.g. .env.production). keep .env.example out of repo if present remove this line
+.env.local
+*.secret
+*.key
+credentials.json
+service-account.json
+google-credentials.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build / output
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+*.map
+
+# Temporary / runtime files
+tmp/
+temp/
+pids/
+*.pid
+*.seed
+*.pid.lock
+*.sock
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+
+# Docker / compose local overrides
+docker-compose.override.yml
+.env.docker
+
+# Misc
+coverage/
+.cache/
