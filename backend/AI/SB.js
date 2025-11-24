@@ -11,7 +11,7 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '../backend/.env') });
 
 
 const __filename = fileURLToPath(import.meta.url);
