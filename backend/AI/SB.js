@@ -11,11 +11,12 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 import dotenv from 'dotenv';
 
-dotenv.config({ path: path.join(__dirname, '../backend/.env') });
 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '../backend/.env') });
 
 // ==================== CORE SETUP ====================
 class RateLimiter {
