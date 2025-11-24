@@ -16,7 +16,31 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config({ path: path.join(__dirname, '../backend/.env') });
+
+// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
+if (!process.env.RAILWAY_ENVIRONMENT) {
+  // We're in local development
+  dotenv.config({ path: path.join(__dirname, '../backend/.env') });
+  console.log('📂 DEV mode: Loaded .env file');
+} else {
+  // We're on Railway - variables are auto-injected
+  console.log('🚀 PROD mode: Using Railway environment variables');
+}
+
+// 🔥 DEBUG LOG - Check what's actually loaded
+console.log('🔍 Checking environment variables:');
+console.log('   GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
+console.log('   NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
+console.log('   Variable names:', Object.keys(process.env).filter(k => k.includes('API')));
+
+// Add this temporary debug block
+console.log('=== ENVIRONMENT DEBUG ===');
+console.log('All env keys:', Object.keys(process.env).join(', '));
+console.log('Raw GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'SET' : 'MISSING');
+console.log('Raw NUTRIENT_API_KEY:', process.env.NUTRIENT_API_KEY ? 'SET' : 'MISSING');
+console.log('RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('=========================');
 
 // ==================== CORE SETUP ====================
 class RateLimiter {
