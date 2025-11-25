@@ -1,4 +1,4 @@
-// AI/MB.js – FIXED: Proper function ordering + Syntax repair
+// // AI/MB.js – FINAL MERGED VERSION: Chapters + Math + Mermaid Diagrams
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -14,6 +14,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
   console.log('📂 DEV mode: Loaded .env file');
@@ -21,11 +22,13 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
 
+// 🔥 DEBUG LOG
 console.log('=== ENVIRONMENT DEBUG ===');
 console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
 console.log('=========================');
 
+// ==================== CORE SETUP ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -74,6 +77,7 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
+// ==================== TEXT PROCESSING & CLEANUP ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
@@ -90,11 +94,13 @@ function cleanUpAIText(text) {
     .replace(/\*\s*$/gm, '')
     .trim();
 
+  // 🔥 MATH FIX: Remove backslashes before dollar signs (\$ -> $)
   clean = clean.replace(/\\(\$)/g, '$');
   return clean;
 }
 
-// ==================== MERMAID SYNTAX REPAIR ====================
+// ==================== MERMAID DIAGRAM LOGIC ====================
+
 function repairMermaidSyntax(code) {
   let fixed = code
     // Fix trailing semicolons after arrows
@@ -118,21 +124,22 @@ function repairMermaidSyntax(code) {
   return fixed.trim();
 }
 
-// ==================== DIAGRAM RENDERING (KROKI) ====================
 async function formatDiagrams(content) {
   const diagramBlocks = [];
-  const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)\n```/g)];
+  // Regex to catch mermaid blocks
+  const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)```/g)];
   
-  logger.info(`🔍 Found ${matches.length} mermaid code blocks`);
+  if (matches.length > 0) {
+    logger.info(`🔍 Found ${matches.length} mermaid code blocks. Rendering...`);
+  }
   
   for (let i = 0; i < matches.length; i++) {
     const rawCode = matches[i][1].trim();
     const code = repairMermaidSyntax(rawCode);
     
-    logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}`);
-    
     try {
-      const response = await fetch('https://kroki.io/mermaid/svg', {
+      // Use Kroki to render Mermaid to SVG
+      const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
@@ -142,68 +149,68 @@ async function formatDiagrams(content) {
       });
       
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Kroki error: ${response.status} - ${errorText}`);
+        throw new Error(`Kroki error: ${response.status}`);
       }
       
       const svg = await response.text();
       const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
       
       diagramBlocks.push(base64);
+      // Replace the code block with a placeholder
       content = content.replace(matches[i][0], `__DIAGRAM__${diagramBlocks.length - 1}__`);
-      logger.info(`✅ Diagram ${i + 1} rendered successfully`);
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      content = content.replace(matches[i][0], `\n> ⚠️ Diagram rendering failed: Invalid syntax\n\n`);
+      // Fallback: Leave code block but add warning
+      content = content.replace(matches[i][0], `\n> *⚠️ Diagram generation failed.*\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
     }
   }
   
   return { content, diagrams: { blocks: diagramBlocks } };
 }
 
-// ==================== MATH & DIAGRAM FORMATTING ====================
-function formatMath(content, diagramData = { blocks: [] }) {
+function formatMathAndContent(content, diagramData = { blocks: [] }) {
   const tables = [];
   const codeBlocks = [];
 
-  // Protect tables
+  // 1. Protect tables
   content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
     tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
 
-  // Protect fenced code
-  content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (match, code) => {
+  // 2. Protect fenced code (non-mermaid)
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // Protect inline code
+  // 3. Protect inline code
   content = content.replace(/`([^`]+)`/g, (match) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // Math processing
-  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
-  content = content.replace(/\\wedge/g, '^');
+  // 4. Math processing (LaTeX)
+  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); // Convert \[ \] to $$ $$
+  content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
 
-  // Restore protected blocks
+  // 5. Restore Protected Blocks
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
-  
-  // Restore diagrams (this was missing!)
+
+  // 6. Restore Diagrams (Insert the Images)
   content = content.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
     const base64 = diagramData.blocks[i];
     return base64 ? 
-      `<img src="${base64}" alt="Diagram" style="max-width: 100%; height: auto; margin: 1.5em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid;" />` 
+      `<div style="text-align: center; margin: 2em 0;"><img src="${base64}" alt="Diagram" style="max-width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);"></div>` 
       : '';
   });
 
   return content;
 }
 
+// ==================== MARKED SETUP ====================
 marked.setOptions({
   headerIds: false,
   breaks: true,
@@ -216,6 +223,7 @@ marked.setOptions({
   }
 });
 
+// ==================== HELPER FUNCTIONS ====================
 function getHistoryFile(userId) {
   return path.join(HISTORY_DIR, `history-${userId}.json`);
 }
@@ -241,6 +249,7 @@ function deleteFile(filePath) {
   try { fs.unlinkSync(filePath); } catch { logger.warn(`Delete failed: ${filePath}`); }
 }
 
+// ==================== TOC PARSER ====================
 function parseTOC(tocContent) {
   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
   const chapters = [];
@@ -292,6 +301,7 @@ function generateFallbackTOC(bookTopic) {
   return { raw: '', parsed: chapters };
 }
 
+// ==================== AI INTERACTION ====================
 async function askAI(prompt, userId, bookTopic, options = {}) {
   await globalRateLimiter.wait();
   const genCfg = options.genOptions || { maxOutputTokens: 4000, temperature: 0.7, topP: 0.9 };
@@ -329,6 +339,7 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   }
 }
 
+// ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 REQUIREMENTS (FOLLOW EXACTLY):
@@ -353,49 +364,48 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
+  // 🔥 UPDATED PROMPT: Now requests Mermaid Diagrams!
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
-**CRITICAL FORMATTING RULES:**
+CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
+- Do NOT repeat the title as a second heading
 - Use ### for ALL subsections
 - ALL tables MUST use strict GitHub Markdown table syntax
 - NO HTML tags like <header> or <footer>
 - 600+ words total
 
-**DIAGRAM REQUIREMENTS (MANDATORY - UNIQUE PER CHAPTER):**
-- You MUST include EXACTLY 2 UNIQUE Mermaid.js diagrams in this chapter.
-- Diagrams must be SPECIFIC to this chapter's subtopics: ${chapterInfo.title}
-- Wrap diagrams in \`\`\`mermaid\`\`\` code blocks.
-- **VALID SYNTAX:** Use simple node IDs without special characters. Example:
-\`\`\`mermaid
-graph TD
-    A[Transaction] --> B{Verification}
-    B -->|Valid| C[Add to Mempool]
-    C --> D[Broadcast]
-\`\`\`
-- Place diagrams AFTER the paragraph that explains each concept.
+**MATH FORMATTING RULES (CRITICAL):**
+- Use LaTeX for ALL mathematical expressions.
+- Wrap **inline math** in single dollar signs, e.g., $E = mc^2$.
+- Wrap **block math** (centered equations) in double dollar signs, e.g., $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
+- **DO NOT** escape the dollar signs.
 
-**MATH FORMATTING:**
-- Inline: $E = mc^2$, Block: $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
+**VISUALIZATION RULES (DIAGRAMS):**
+- If a concept, process, or workflow is complex, **YOU MUST** create a diagram for it.
+- Use **Mermaid.js** syntax wrapped in code blocks, like this:
+  \`\`\`mermaid
+  graph TD;
+    A[Start] --> B{Decision};
+    B -->|Yes| C[Process];
+    B -->|No| D[Stop];
+  \`\`\`
+- Use 'graph TD', 'sequenceDiagram', or 'mindmap'.
 
-MANDATORY STRUCTURE:
-1) Introduction
-2) ### Subsections for each subtopic (with UNIQUE diagrams)
+MANDATORY CONTENT STRUCTURE:
+1) Introduction: A brief overview.
+2) KEY SECTIONS: Create a subsection (### Heading) for EACH subtopic:
 ${subtopicList}
-3) Practical Application
-4) Further Reading
 
-Output ONLY chapter content.`;
+3) Practical Application/Exercise: A real-world example (include Math/Diagrams if relevant).
+4) Further Reading: 2-3 references.
 
-  const rawContent = await askAI(prompt, userId, bookTopic, {
+Output ONLY the chapter content.`;
+
+  return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1800,
-    genOptions: { maxOutputTokens: 4000, temperature: 0.4 }
-  });
-  
-  const { content: processedContent, diagrams } = await formatDiagrams(rawContent);
-  const cleaned = cleanUpAIText(processedContent);
-  
-  return { content: cleaned, diagrams };
+    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
+  }));
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
@@ -404,9 +414,98 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-async function generatePDF(content, outputPath, bookTitle, diagramData = { blocks: [] }) {
+// ==================== PDF GENERATION ====================
+function buildEnhancedHTML(content, bookTitle, diagramData) {
+  const cleaned = cleanUpAIText(content);
+  // Pass diagram data to formatter
+  const formattedContent = formatMathAndContent(cleaned, diagramData);
+  
+  const titleMatch = cleaned.match(/^#\s+(.+)$/m);
+  let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
+  displayTitle = displayTitle
+    .replace(/^Chapter\s+\d+:\s*/i, '')
+    .replace(/^\d+\.\s*/, '')
+    .trim();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${displayTitle} - Bookgen.ai</title>
+  
+  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
+  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
+  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
+  
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
+      svg: { fontCache: 'none', scale: 0.95 }
+    };
+  </script>
+  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js)"></script>
+  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
+  
+  <style>
+    @page { margin: 90px 70px 80px 70px; size: A4; }
+    .cover-page { page: cover; }
+    @page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
+    body { font-family: 'Merriweather', Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; background: white; margin: 0; padding: 0; text-align: justify; hyphens: auto; }
+    .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
+    .cover-title { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 700; margin-bottom: 0.3em; line-height: 1.2; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
+    .cover-subtitle { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 300; margin-bottom: 2em; opacity: 0.9; }
+    .cover-meta { position: absolute; bottom: 60px; font-size: 14px; font-weight: 300; opacity: 0.8; }
+    .cover-disclaimer { margin-top: 30px; font-size: 12px; color: #fecaca; font-style: italic; }
+    h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; }
+    h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
+    h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
+    h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
+    h3 { font-size: 18px; color: #6b7280; }
+    .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
+    code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
+    pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); }
+    pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
+    blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
+    blockquote::before { content: "“"; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
+    .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
+    .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
+    table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+    th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
+    td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
+    .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="cover-page">
+    <div class="cover-content">
+      <h1 class="cover-title">Bookgen.AI</h1>
+      <h2 class="cover-subtitle">A Guide book</h2>
+      <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
+    </div>
+    <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
+  </div>
+  <div class="chapter-content">${marked.parse(formattedContent)}</div>
+  <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
+  <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
+</body>
+</html>`;
+}
+
+async function generatePDF(content, outputPath, bookTitle) {
   try {
-    const enhancedHtml = buildEnhancedHTML(content, bookTitle, diagramData);
+    // 🔥 STEP 1: Process Diagrams (Kroki Fetch) BEFORE building HTML
+    logger.info('🎨 Rendering diagrams (if any)...');
+    const { content: processedContent, diagrams } = await formatDiagrams(content);
+    
+    // 🔥 STEP 2: Build HTML with Diagram Data
+    const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, diagrams);
     
     const form = new FormData();
     const instructions = {
@@ -436,7 +535,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramData = { block
       contentType: 'text/html'
     });
 
-    const response = await fetch('https://api.nutrient.io/build', {
+    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -457,6 +556,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramData = { block
   }
 }
 
+// ==================== MAIN GENERATOR ====================
 export async function generateBookS(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
@@ -466,6 +566,7 @@ export async function generateBookS(rawTopic, userId) {
     userHistories.delete(safeUserId);
     const { raw: tocRaw, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
     
+    // Format TOC for PDF
     const formattedTOC = chapterInfos.map((ch, i) => {
       const num = i + 1;
       return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
@@ -475,8 +576,7 @@ export async function generateBookS(rawTopic, userId) {
     saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
     const files = [tocFile];
 
-    const allDiagrams = { blocks: [] };
-
+    // Generate chapters
     logger.info('Step 2/3: Generating chapters...');
     for (let i = 0; i < chapterInfos.length; i++) {
       if (global.cancelFlags?.[safeUserId]) {
@@ -488,37 +588,30 @@ export async function generateBookS(rawTopic, userId) {
       const info = chapterInfos[i];
       logger.info(` ${chNum}. ${info.title}`);
       
-      const chapterResult = await generateChapter(bookTopic, chNum, info, safeUserId);
-      
-      if (chapterResult.diagrams?.blocks?.length > 0) {
-        logger.info(`   → Chapter ${chNum} has ${chapterResult.diagrams.blocks.length} diagrams`);
-        allDiagrams.blocks.push(...chapterResult.diagrams.blocks);
-      } else {
-        logger.warn(`   → Chapter ${chNum} has NO diagrams!`);
-      }
-      
-      const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapterResult.content}\n\n---\n`;
+      const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
+      const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapter}\n\n---\n`;
       
       const f = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chNum}.txt`);
       saveToFile(f, txt);
       files.push(f);
     }
 
+    // Generate conclusion
     logger.info('Step 3/3: Generating conclusion...');
     const conclusion = await generateConclusion(bookTopic, chapterInfos, safeUserId);
     const conclFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
     saveToFile(conclFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
     files.push(conclFile);
 
+    // Combine and generate PDF
     logger.info('Combining content and generating PDF...');
     const combined = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
     
-    logger.info(`📊 Total diagrams: ${allDiagrams.blocks.length}`);
-    
-    await generatePDF(combined, pdfPath, bookTopic, allDiagrams);
+    await generatePDF(combined, pdfPath, bookTopic);
 
+    // Cleanup
     files.forEach(deleteFile);
     userHistories.delete(safeUserId);
     
@@ -530,6 +623,7 @@ export async function generateBookS(rawTopic, userId) {
   }
 }
 
+// ==================== QUEUE SYSTEM ====================
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const result = await generateBookS(task.bookTopic, task.userId);
