@@ -1,4 +1,4 @@
-// // AI/MB.js – FINAL FIXED VERSION: Clean URLs + Diagram Repair + Math
+// AI/MB.js – FIXED VERSION: Clean URLs + Diagram Repair + Math
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -139,8 +139,8 @@ async function formatDiagrams(content) {
     const code = repairMermaidSyntax(rawCode);
     
     try {
-      // ✅ FIX: CLEAN URL (No Markdown Brackets)
-      const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
+      // ✅ FIXED: CLEAN URL (Removed Markdown brackets)
+      const response = await fetch('https://kroki.io/mermaid/svg', {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
@@ -435,9 +435,9 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
   
-  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
-  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
-  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   
   <script>
     window.MathJax = {
@@ -449,12 +449,12 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
       svg: { fontCache: 'global' }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
-  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
@@ -541,8 +541,8 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    // ✅ FIX: CLEAN URL (Removed [] brackets)
-    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    // ✅ FIXED: CLEAN URL (Removed Markdown brackets)
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
