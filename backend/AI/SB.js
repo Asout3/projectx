@@ -528,7 +528,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    const nutrientApiUrl = '[https://api.nutrient.io/build](https://api.nutrient.io/build)'; 
+    const nutrientApiUrl = 'https://api.nutrient.io/build'; 
 
     logger.info(`🚀 Sending request to Nutrient API...`);
     const response = await fetch(nutrientApiUrl, {
