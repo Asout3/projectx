@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL BRUTAL VERSION: 5 Chapters + SUBTOPICS + MATH + FORCED DIAGRAMS
+// AI/MB.js – FINAL BRUTAL VERSION: 5 Chapters + SUBTOPICS + MATH + FORCED DIAGRAMS (KROKI)
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -14,6 +14,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
   console.log('📂 DEV mode: Loaded .env file');
@@ -21,11 +22,13 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
 
+// 🔥 DEBUG LOG
 console.log('=== ENVIRONMENT DEBUG ===');
 console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
 console.log('=========================');
 
+// ==================== CORE SETUP ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -74,6 +77,7 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
+// ==================== TEXT PROCESSING (FIXED) ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
@@ -95,25 +99,7 @@ function cleanUpAIText(text) {
   return clean;
 }
 
-// ==================== DIAGRAM RENDERING (NEW) ====================
-async function renderMermaidWithKroki(code) {
-  try {
-    const krokiUrl = 'https://kroki.io/mermaid/svg';
-    const encoded = Buffer.from(code).toString('base64url');
-    const response = await fetch(`${krokiUrl}/${encoded}`, {
-      headers: { 'Accept': 'image/svg+xml' }
-    });
-    
-    if (!response.ok) throw new Error(`Kroki error: ${response.status}`);
-    
-    const svg = await response.text();
-    return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-  } catch (error) {
-    logger.error(`Diagram render failed: ${error.message}`);
-    return null;
-  }
-}
-
+// ==================== DIAGRAM RENDERING (KROKI - NO LOCAL DEPS) ====================
 async function formatDiagrams(content) {
   const diagramBlocks = [];
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)\n```/g)];
@@ -124,15 +110,25 @@ async function formatDiagrams(content) {
     const code = matches[i][1].trim();
     logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}: ${code.substring(0, 60)}...`);
     
-    const base64 = await renderMermaidWithKroki(code);
-    
-    if (base64) {
+    try {
+      // Use Kroki cloud service (no local install needed)
+      const krokiUrl = 'https://kroki.io/mermaid/svg';
+      const encoded = Buffer.from(code).toString('base64url');
+      const response = await fetch(`${krokiUrl}/${encoded}`, {
+        headers: { 'Accept': 'image/svg+xml' }
+      });
+      
+      if (!response.ok) throw new Error(`Kroki error: ${response.status}`);
+      
+      const svg = await response.text();
+      const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+      
       diagramBlocks.push(base64);
       content = content.replace(matches[i][0], `__DIAGRAM__${diagramBlocks.length - 1}__`);
       logger.info(`✅ Diagram ${i + 1} rendered successfully`);
-    } else {
-      logger.warn(`❌ Failed to render diagram ${i + 1}`);
-      // Leave the original code block if rendering fails
+    } catch (error) {
+      logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
+      // Leave original code block if render fails
     }
   }
   
@@ -401,6 +397,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     .replace(/^\d+\.\s*/, '')
     .trim();
 
+  // 🔥 URL FIX: Cleaned hrefs/srcs (Removed []())
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -563,12 +560,9 @@ export async function generateBookS(rawTopic, userId) {
       
       const chapterResult = await generateChapter(bookTopic, chNum, info, safeUserId);
       
-      // 🔥 NEW: Store diagrams and log counts
-      if (chapterResult.diagrams?.blocks?.length > 0) {
-        logger.info(`   → Chapter ${chNum} has ${chapterResult.diagrams.blocks.length} diagrams`);
+      // 🔥 NEW: Store diagrams and update content
+      if (chapterResult.diagrams?.blocks) {
         allDiagrams.blocks.push(...chapterResult.diagrams.blocks);
-      } else {
-        logger.warn(`   → Chapter ${chNum} has NO diagrams! AI is misbehaving.`);
       }
       
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapterResult.content}\n\n---\n`;
@@ -591,8 +585,7 @@ export async function generateBookS(rawTopic, userId) {
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
     
-    logger.info(`📊 Total diagrams for entire book: ${allDiagrams.blocks.length}`);
-    
+    // 🔥 NEW: Pass diagram data to PDF generator
     await generatePDF(combined, pdfPath, bookTopic, allDiagrams);
 
     // Cleanup
