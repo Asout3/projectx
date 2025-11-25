@@ -126,7 +126,6 @@ function repairMermaidSyntax(code) {
 
 async function formatDiagrams(content) {
   const diagramBlocks = [];
-  // Regex to catch mermaid blocks
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)```/g)];
   
   if (matches.length > 0) {
@@ -138,8 +137,8 @@ async function formatDiagrams(content) {
     const code = repairMermaidSyntax(rawCode);
     
     try {
-      // Use Kroki to render Mermaid to SVG
-      const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
+      // ✅ FIX: Clean URL
+      const response = await fetch('https://kroki.io/mermaid/svg', {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
@@ -156,11 +155,9 @@ async function formatDiagrams(content) {
       const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
       
       diagramBlocks.push(base64);
-      // Replace the code block with a placeholder
       content = content.replace(matches[i][0], `__DIAGRAM__${diagramBlocks.length - 1}__`);
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      // Fallback: Leave code block but add warning
       content = content.replace(matches[i][0], `\n> *⚠️ Diagram generation failed.*\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
     }
   }
@@ -500,11 +497,9 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
 
 async function generatePDF(content, outputPath, bookTitle) {
   try {
-    // 🔥 STEP 1: Process Diagrams (Kroki Fetch) BEFORE building HTML
     logger.info('🎨 Rendering diagrams (if any)...');
     const { content: processedContent, diagrams } = await formatDiagrams(content);
     
-    // 🔥 STEP 2: Build HTML with Diagram Data
     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, diagrams);
     
     const form = new FormData();
@@ -535,7 +530,8 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    // ✅ FIX: Clean URL
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
