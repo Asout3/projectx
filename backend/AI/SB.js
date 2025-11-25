@@ -12,6 +12,10 @@ import FormData from 'form-data';
 import dotenv from 'dotenv';
 import crypto from 'crypto'; // For hashing diagram code
 
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Environment setup (Railway-safe)
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
