@@ -1,4 +1,4 @@
-//AI/MB.js – FIXED VERSION: Diagram rendering in PDF
+//AI/MB.js – FIXED VERSION: Correct asset handling for diagrams
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -75,7 +75,7 @@ function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
     .replace(/^(?:Hi|Hello|Sure|Here).*?(\n\n|$)/gis, '')
-    // 🔥 FIXED: Don't remove figure/figcaption tags - we need these for diagrams!
+    // 🔥 FIXED: Don't remove figure/figcaption tags
     .replace(/<\/?(header|footer)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
@@ -127,7 +127,7 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION (IMPROVED) ====================
+// ==================== DIAGRAM GENERATION (DEBUGGED) ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
@@ -136,7 +136,7 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g;
   let match;
   const diagramFiles = [];
-  let diagramCount = 0; // Counter for figure numbering
+  let diagramCount = 0;
    
   while ((match = mermaidRegex.exec(content)) !== null) {
     const diagramCode = match[1].trim();
@@ -158,17 +158,17 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // 🔥 FIXED: Use raw HTML without extra indentation to prevent code block rendering
-      // Also added a div wrapper to ensure proper separation from markdown
-      const htmlReplacement = `<div class="diagram-wrapper">\n<figure class="diagram-container">\n<img src="${diagramId}" alt="Diagram" class="diagram"/>\n<figcaption>Figure ${chapterNumber}.${diagramCount}: Process Diagram</figcaption>\n</figure>\n</div>`;
+      // 🔥 FIXED: Use exact filename reference, no extra whitespace, proper structure
+      const htmlReplacement = `<figure class="diagram-container"><img src="${diagramId}" alt="Diagram" class="diagram"/><figcaption>Figure ${chapterNumber}.${diagramCount}: Process Diagram</figcaption></figure>`;
 
       content = content.replace(match[0], htmlReplacement);
       diagramFiles.push(diagramPath);
-      logger.info(`✅ Generated diagram: ${diagramId}`);
+      
+      // 🔥 DEBUG LOGGING
+      logger.info(`✅ Diagram ${diagramId}: ${svgBuffer.length} bytes written to ${diagramPath}`);
     } catch (error) {
       logger.error(`❌ Diagram generation failed: ${error.message}`);
-      // Graceful fallback - also not indented
-      content = content.replace(match[0], '\n<p><em>[Diagram could not be generated]</em></p>\n');
+      content = content.replace(match[0], '<p><em>[Diagram could not be generated]</em></p>');
     }
   }
    
@@ -480,14 +480,20 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
   try {
     const enhancedHtml = buildEnhancedHTML(content, bookTitle);
     
+    // 🔥 DEBUG: Log what we're sending
+    logger.info(`📄 HTML length: ${enhancedHtml.length} bytes`);
+    logger.info(`📎 Assets to attach: ${diagramFiles.length}`);
+    diagramFiles.forEach(f => logger.info(`  - ${path.basename(f)} (${fs.existsSync(f) ? fs.statSync(f).size + ' bytes' : 'MISSING'})`));
+
     const form = new FormData();
     
     const assetNames = diagramFiles.map(f => path.basename(f));
+    logger.info(`📎 Asset names for Nutrient: ${JSON.stringify(assetNames)}`);
 
     const instructions = {
       parts: [{ 
         html: "index.html",
-        assets: assetNames
+        assets: assetNames.length > 0 ? assetNames : undefined // Don't include empty array
       }],
       output: {
         format: "pdf",
@@ -514,12 +520,18 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       contentType: 'text/html'
     });
 
-    // Attach all diagram SVGs
+    // 🔥 FIXED: Verify files exist and attach correctly
     diagramFiles.forEach(filePath => {
-      form.append(path.basename(filePath), fs.createReadStream(filePath), {
-        filename: path.basename(filePath),
+      if (!fs.existsSync(filePath)) {
+        logger.error(`❌ Diagram file not found: ${filePath}`);
+        return;
+      }
+      const filename = path.basename(filePath);
+      form.append(filename, fs.createReadStream(filePath), {
+        filename: filename,
         contentType: 'image/svg+xml'
       });
+      logger.info(`📎 Attached asset: ${filename}`);
     });
 
     // ✅ CORRECT: Plain URL without markdown syntax
@@ -538,7 +550,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
 
     const pdfBuffer = await response.buffer();
     fs.writeFileSync(outputPath, pdfBuffer);
-    logger.info(`✅ PDF generated: ${outputPath}`);
+    logger.info(`✅ PDF generated: ${outputPath} (${pdfBuffer.length} bytes)`);
     return outputPath;
   } catch (error) {
     logger.error(`❌ PDF generation failed: ${error.message}`);
@@ -605,6 +617,10 @@ export async function generateBookS(rawTopic, userId) {
     const combined = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
+    
+    // 🔥 DEBUG: Log final state
+    logger.info(`📎 Total diagram files: ${allDiagramFiles.length}`);
+    allDiagramFiles.forEach(f => logger.info(`  Final asset: ${path.basename(f)}`));
     
     // Pass diagram files to PDF generator
     await generatePDF(combined, pdfPath, bookTopic, allDiagramFiles);
