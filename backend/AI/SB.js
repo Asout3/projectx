@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL VERSION: 5 Chapters + SUBTOPICS + MATH + DIAGRAMS
+// AI/MB.js – FINAL BRUTAL VERSION: 5 Chapters + SUBTOPICS + MATH + FORCED DIAGRAMS
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -14,7 +14,6 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
   console.log('📂 DEV mode: Loaded .env file');
@@ -22,13 +21,11 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
 
-// 🔥 DEBUG LOG
 console.log('=== ENVIRONMENT DEBUG ===');
 console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
 console.log('=========================');
 
-// ==================== CORE SETUP ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -77,11 +74,10 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// ==================== TEXT PROCESSING (FIXED) ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
-    .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
+    .replace(/^(?:Hi|Hello|Hey|Sure|Here|Absolutely|Okay|Alright).*?(\n\n|$)/gis, '')
     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
@@ -120,22 +116,27 @@ async function renderMermaidWithKroki(code) {
 
 async function formatDiagrams(content) {
   const diagramBlocks = [];
-  
-  // Protect Mermaid diagrams: ```mermaid ... ```
-  let processedContent = content;
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)\n```/g)];
+  
+  logger.info(`🔍 Found ${matches.length} mermaid code blocks`);
   
   for (let i = 0; i < matches.length; i++) {
     const code = matches[i][1].trim();
+    logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}: ${code.substring(0, 60)}...`);
+    
     const base64 = await renderMermaidWithKroki(code);
     
     if (base64) {
       diagramBlocks.push(base64);
-      processedContent = processedContent.replace(matches[i][0], `__DIAGRAM__${i}__`);
+      content = content.replace(matches[i][0], `__DIAGRAM__${diagramBlocks.length - 1}__`);
+      logger.info(`✅ Diagram ${i + 1} rendered successfully`);
+    } else {
+      logger.warn(`❌ Failed to render diagram ${i + 1}`);
+      // Leave the original code block if rendering fails
     }
   }
   
-  return { content: processedContent, diagrams: diagramBlocks };
+  return { content, diagrams: { blocks: diagramBlocks } };
 }
 
 function formatMath(content, diagramData = { blocks: [] }) {
@@ -173,14 +174,13 @@ function formatMath(content, diagramData = { blocks: [] }) {
   content = content.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
     const base64 = diagramData.blocks[i];
     return base64 ? 
-      `<img src="${base64}" alt="Diagram" style="max-width: 100%; height: auto; margin: 2em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);" />` 
+      `<img src="${base64}" alt="Diagram" style="max-width: 100%; height: auto; margin: 2em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid;" />` 
       : '';
   });
 
   return content;
 }
 
-// ==================== MARKED SETUP ====================
 marked.setOptions({
   headerIds: false,
   breaks: true,
@@ -193,7 +193,6 @@ marked.setOptions({
   }
 });
 
-// ==================== HELPER FUNCTIONS ====================
 function getHistoryFile(userId) {
   return path.join(HISTORY_DIR, `history-${userId}.json`);
 }
@@ -219,7 +218,6 @@ function deleteFile(filePath) {
   try { fs.unlinkSync(filePath); } catch { logger.warn(`Delete failed: ${filePath}`); }
 }
 
-// ==================== TOC PARSER ====================
 function parseTOC(tocContent) {
   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
   const chapters = [];
@@ -271,7 +269,6 @@ function generateFallbackTOC(bookTopic) {
   return { raw: '', parsed: chapters };
 }
 
-// ==================== AI INTERACTION ====================
 async function askAI(prompt, userId, bookTopic, options = {}) {
   await globalRateLimiter.wait();
   const genCfg = options.genOptions || { maxOutputTokens: 4000, temperature: 0.7, topP: 0.9 };
@@ -309,7 +306,6 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
   }
 }
 
-// ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 REQUIREMENTS (FOLLOW EXACTLY):
@@ -334,10 +330,10 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 NEW: Force AI to generate diagrams for every subtopic
+  // 🔥 BRUTAL DIAGRAM PROMPT - FORCES AI TO GENERATE DIAGRAMS
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
-CRITICAL FORMATTING RULES:
+**CRITICAL FORMATTING RULES (VIOLATE AT YOUR PERIL):**
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
 - Use ### for ALL subsections
@@ -345,17 +341,20 @@ CRITICAL FORMATTING RULES:
 - NO HTML tags like <header> or <footer>
 - 600+ words total
 
-**DIAGRAM REQUIREMENTS (MANDATORY):**
-- For EACH subtopic, include EXACTLY ONE Mermaid.js diagram in a \`\`\`mermaid\`\`\` code block.
-- Diagram types: flowchart TD, sequenceDiagram, classDiagram, mindmap, pie, graph TD/LR.
-- Place the diagram IMMEDIATELY after its related paragraph.
-- Example:
+**DIAGRAM REQUIREMENTS (MANDATORY - DO NOT SKIP THIS SECTION):**
+- You MUST include AT LEAST 2 Mermaid.js diagrams in this chapter.
+- Wrap ALL diagrams in \`\`\`mermaid\`\`\` code blocks.
+- Valid diagram types: flowchart TD, sequenceDiagram, classDiagram, mindmap, pie, graph TD.
+- Example of CORRECT format:
 \`\`\`mermaid
 graph TD
-    A[Start] --> B{Decision}
+    A[User] --> B{Decision}
     B -->|Yes| C[Action]
     B -->|No| D[End]
 \`\`\`
+- If a subtopic doesn't fit a diagram, create a diagram for a different concept in the chapter.
+- Place diagrams naturally after their relevant explanation paragraph.
+- FAILURE TO INCLUDE DIAGRAMS WILL RESULT IN INVALID OUTPUT.
 
 **MATH FORMATTING RULES (CRITICAL):**
 - Use LaTeX for ALL mathematical expressions.
@@ -364,25 +363,24 @@ graph TD
 - **DO NOT** escape the dollar signs (write $, not \\$).
 - **DO NOT** escape LaTeX backslashes (write \\frac, not \\\\frac).
 
-MANDATORY CONTENT STRUCTURE:
+**MANDATORY CONTENT STRUCTURE:**
 1) Introduction: Brief overview.
-2) KEY SECTIONS: Create a ### subsection for EACH subtopic with a diagram:
+2) KEY SECTIONS: Create ### subsections for these topics (USE DIAGRAMS WHERE APPROPRIATE):
 ${subtopicList}
 3) Practical Application: Real-world example (include Math if relevant).
 4) Further Reading: 2-3 references.
 
-Output ONLY the chapter content with diagrams.`;
+Output ONLY the chapter content with embedded diagram code blocks.`;
 
   const rawContent = await askAI(prompt, userId, bookTopic, {
     minLength: 1800,
     genOptions: { maxOutputTokens: 4000, temperature: 0.4 }
   });
   
-  // 🔥 NEW: Process diagrams before cleanup
+  // 🔥 Process diagrams before cleanup
   const { content: processedContent, diagrams } = await formatDiagrams(rawContent);
   const cleaned = cleanUpAIText(processedContent);
   
-  // Pass diagram data to formatMath
   return { content: cleaned, diagrams };
 }
 
@@ -392,7 +390,6 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned, diagramData);
@@ -404,7 +401,6 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     .replace(/^\d+\.\s*/, '')
     .trim();
 
-  // 🔥 URL FIX: Cleaned hrefs/srcs (Removed []())
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -459,10 +455,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
     .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
-    
-    /* 🔥 NEW: Diagram image styling */
     img { max-width: 100%; height: auto; margin: 2em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid; }
-    
     .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
   </style>
 </head>
@@ -535,7 +528,6 @@ async function generatePDF(content, outputPath, bookTitle, diagramData = { block
   }
 }
 
-// ==================== MAIN GENERATOR ====================
 export async function generateBookS(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
@@ -571,9 +563,12 @@ export async function generateBookS(rawTopic, userId) {
       
       const chapterResult = await generateChapter(bookTopic, chNum, info, safeUserId);
       
-      // 🔥 NEW: Store diagrams and update content
-      if (chapterResult.diagrams?.blocks) {
+      // 🔥 NEW: Store diagrams and log counts
+      if (chapterResult.diagrams?.blocks?.length > 0) {
+        logger.info(`   → Chapter ${chNum} has ${chapterResult.diagrams.blocks.length} diagrams`);
         allDiagrams.blocks.push(...chapterResult.diagrams.blocks);
+      } else {
+        logger.warn(`   → Chapter ${chNum} has NO diagrams! AI is misbehaving.`);
       }
       
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapterResult.content}\n\n---\n`;
@@ -596,7 +591,8 @@ export async function generateBookS(rawTopic, userId) {
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
     
-    // 🔥 NEW: Pass diagram data to PDF generator
+    logger.info(`📊 Total diagrams for entire book: ${allDiagrams.blocks.length}`);
+    
     await generatePDF(combined, pdfPath, bookTopic, allDiagrams);
 
     // Cleanup
@@ -611,7 +607,6 @@ export async function generateBookS(rawTopic, userId) {
   }
 }
 
-// ==================== QUEUE SYSTEM ====================
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const result = await generateBookS(task.bookTopic, task.userId);
