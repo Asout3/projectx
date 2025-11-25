@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL FIXED VERSION: 5 Chapters + Subtopics + MATH FIXES + DIAGRAMS
+// AI/MB.js – FINAL FIXED VERSION: Assets Array Fix + Diagram Styling
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -10,8 +10,7 @@ import winston from 'winston';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
 import dotenv from 'dotenv';
-import crypto from 'crypto'; // For hashing diagram code
-
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,7 +50,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-lite';
+const MODEL_NAME = 'gemini-2.0-flash-lite-preview-02-05'; // Updated to latest lite model or keep your preferred
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
@@ -120,7 +119,7 @@ function formatMath(content) {
 
   // Convert \[ \] to $$ $$
   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
-  
+   
   // Clean up AI artifacts
   content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
@@ -132,7 +131,7 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION ====================
+// ==================== DIAGRAM GENERATION (IMPROVED) ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
@@ -141,7 +140,7 @@ async function processMermaidDiagrams(content, outputDir) {
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g;
   let match;
   const diagramFiles = [];
-  
+   
   while ((match = mermaidRegex.exec(content)) !== null) {
     const diagramCode = match[1].trim();
     if (!diagramCode) continue;
@@ -152,7 +151,8 @@ async function processMermaidDiagrams(content, outputDir) {
     try {
       // Encode to base64url for mermaid.ink
       const base64Code = Buffer.from(diagramCode).toString('base64url');
-      const imageUrl = `https://mermaid.ink/svg/${base64Code}`;
+      // Using styling settings in URL to ensure it looks good
+      const imageUrl = `https://mermaid.ink/svg/${base64Code}?bgColor=FFFFFF`;
       
       // Fetch the SVG
       const response = await fetch(imageUrl);
@@ -161,8 +161,13 @@ async function processMermaidDiagrams(content, outputDir) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // Replace code block with img tag
-      content = content.replace(match[0], `<img src="${diagramId}" alt="Diagram" class="diagram"/>`);
+      // Replace code block with a centered figure container
+      const htmlReplacement = `
+      <figure class="diagram-container">
+        <img src="${diagramId}" alt="Process Diagram" class="diagram"/>
+      </figure>`;
+
+      content = content.replace(match[0], htmlReplacement);
       diagramFiles.push(diagramPath);
       logger.info(`✅ Generated diagram: ${diagramId}`);
     } catch (error) {
@@ -171,7 +176,7 @@ async function processMermaidDiagrams(content, outputDir) {
       content = content.replace(match[0], '<p><em>[Diagram could not be generated]</em></p>');
     }
   }
-  
+   
   return { content, diagramFiles };
 }
 
@@ -258,7 +263,7 @@ function generateFallbackTOC(bookTopic) {
     "Practical Applications", "Advanced Topics and Trends"
   ];
   const suffix = (cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ')) ? ` in ${cleanTopic}` : '';
-  
+   
   const chapters = base.map((t, i) => ({
     title: `${t}${suffix}`,
     subtopics: ["Understanding the core concept", "Practical applications", "Common challenges"]
@@ -281,14 +286,14 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
       } else if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
         reply = result.candidates[0].content.parts[0].text;
       }
-      
+       
       reply = (reply || '').toString().trim();
 
       if (!reply || reply.length < 50) {
         if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
         continue;
       }
-      
+       
       if (options.saveToHistory) {
         const hist = userHistories.get(userId) || [];
         hist.push({ role: 'user', content: prompt });
@@ -310,7 +315,7 @@ async function generateTOC(bookTopic, userId) {
 REQUIREMENTS:
 - Output EXACTLY 5 chapters
 - Format: "Chapter X: Title"
-- Each chapter: 3-5 subtopics indented with "   - Subtopic"
+- Each chapter: 3-5 subtopics indented with "    - Subtopic"
 - NO extra text`;
 
   for (let attempts = 0; attempts < 5; attempts++) {
@@ -379,35 +384,34 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
 function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
-  
+   
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
   displayTitle = displayTitle.replace(/^Chapter\s+\d+:\s*/i, '').replace(/^\d+\.\s*/, '').trim();
 
-  // 🔥 CSS: Added diagram styling
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
+  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
+  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
       svg: { fontCache: 'none', scale: 0.95 }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js)"></script>
+  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
@@ -435,7 +439,23 @@ function buildEnhancedHTML(content, bookTitle) {
     th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
-    .diagram { max-width: 100%; height: auto; margin: 2em 0; display: block; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    
+    /* DIAGRAM STYLING */
+    .diagram-container { 
+        display: flex; 
+        justify-content: center; 
+        margin: 2em 0; 
+        padding: 10px;
+        background: white;
+    }
+    .diagram { 
+        max-width: 95%; 
+        height: auto; 
+        display: block; 
+        border-radius: 4px; 
+        background-color: white; /* Force white background for transp. SVGs */
+    }
+
     .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
     .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
   </style>
@@ -461,8 +481,15 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
     const enhancedHtml = buildEnhancedHTML(content, bookTitle);
     
     const form = new FormData();
+    
+    // 🔥 FIX: Extract filenames to list as assets in instructions
+    const assetNames = diagramFiles.map(f => path.basename(f));
+
     const instructions = {
-      parts: [{ html: "index.html" }],
+      parts: [{ 
+        html: "index.html",
+        assets: assetNames // <--- THIS IS THE CRITICAL FIX. The API needs to know these files belong to this HTML part.
+      }],
       output: {
         format: "pdf",
         pdf: {
@@ -496,7 +523,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       });
     });
 
-    const response = await fetch('https://api.nutrient.io/build', {
+    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -530,7 +557,7 @@ export async function generateBookS(rawTopic, userId) {
     // Format TOC for PDF
     const formattedTOC = chapterInfos.map((ch, i) => {
       const num = i + 1;
-      return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
+      return `${num}. ${ch.title}\n${ch.subtopics.map(s => `    - ${s}`).join('\n')}`;
     }).join('\n\n');
     
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
@@ -611,6 +638,7 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
+
 
 
 
