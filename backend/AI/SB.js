@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL FIXED VERSION: URL FIX + Dynamic Diagram Caption
+//AI/MB.js – FIXED VERSION: URL syntax errors corrected
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -131,7 +131,7 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION (IMPROVED) ====================
+// ==================== DIAGRAM GENERATION (FIXED) ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
@@ -153,7 +153,7 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
     try {
       // Encode to base64url for mermaid.ink
       const base64Code = Buffer.from(diagramCode).toString('base64url');
-      // Using styling settings in URL to ensure it looks good
+      // 🔥 FIXED: Removed extra space in URL
       const imageUrl = `https://mermaid.ink/svg/${base64Code}?bgColor=FFFFFF`;
       
       // Fetch the SVG
@@ -163,7 +163,7 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // 🔥 IMPROVEMENT: Replace code block with a centered figure with a caption
+      // Replace with centered figure and caption
       const htmlReplacement = `
       <figure class="diagram-container">
         <img src="${diagramId}" alt="Process Diagram" class="diagram"/>
@@ -337,7 +337,6 @@ REQUIREMENTS:
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 PROMPT: Instruct AI to generate Mermaid diagrams
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 CRITICAL FORMATTING RULES:
@@ -398,23 +397,24 @@ function buildEnhancedHTML(content, bookTitle) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
-  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
-  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
+  <!-- 🔥 FIXED: Removed markdown syntax from URLs -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
       svg: { fontCache: 'none', scale: 0.95 }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js)"></script>
-  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
@@ -532,8 +532,8 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       });
     });
 
-    // 🔥 FIX: Correcting the URL string that was likely pasted as Markdown.
-    const nutrientApiUrl = '[https://api.nutrient.io/build](https://api.nutrient.io/build)'; 
+    // ✅ FIXED: Removed markdown syntax from URL
+    const nutrientApiUrl = 'https://api.nutrient.io/build'; 
 
     const response = await fetch(nutrientApiUrl, {
       method: 'POST',
