@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL FIXED VERSION: Optional Math/Diagrams + Smaller Diagrams
+// AI/MB.js – ORIGINAL CODE + DIAGRAM FEATURE ONLY
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -77,7 +77,7 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
-    .replace(/^(?:Hi|Hello|Hey|Sure|Here|Absolutely|Okay|Alright).*?(\n\n|$)/gis, '')
+    .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
@@ -94,6 +94,7 @@ function cleanUpAIText(text) {
   return clean;
 }
 
+// ==================== DIAGRAM LOGIC (ADDED) ====================
 function repairMermaidSyntax(code) {
   let fixed = code
     .replace(/^mermaid\s*\n/i, '')
@@ -105,7 +106,6 @@ function repairMermaidSyntax(code) {
     .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
     .replace(/\n{2,}/g, '\n')
     .replace(/-->\s*$/gm, '--> EndNode[End]');
-  
   return fixed.trim();
 }
 
@@ -147,14 +147,15 @@ async function formatDiagrams(content) {
       
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      content = content.replace(matches[i][0], `\n> *⚠️ Diagram generation failed (Syntax Error). Raw code below:*\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
+      // Silent failure: remove diagram completely
+      content = content.replace(matches[i][0], '');
     }
   }
   
   return { content, diagrams: { blocks: diagramBlocks } };
 }
 
-function formatMathAndContent(content, diagramData = { blocks: [] }) {
+function formatMath(content) {
   const tables = [];
   const codeBlocks = [];
 
@@ -163,7 +164,7 @@ function formatMathAndContent(content, diagramData = { blocks: [] }) {
     return `__TABLE__${tables.length - 1}__`;
   });
 
-  content = content.replace(/```(?!mermaid)[\w]*\n([\s\S]*?)```/g, (match, code) => {
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
@@ -173,21 +174,12 @@ function formatMathAndContent(content, diagramData = { blocks: [] }) {
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // Optional math processing - only if delimiters exist
   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); 
   content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
 
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
-
-  // 🔥 FIXED: Smaller diagrams with max-height constraint
-  content = content.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
-    const base64 = diagramData.blocks[i];
-    return base64 ? 
-      `<div style="text-align: center; margin: 2em 0;"><img src="${base64}" alt="Diagram" style="max-width: 90%; max-height: 400px; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);"></div>` 
-      : '';
-  });
 
   return content;
 }
@@ -341,7 +333,7 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 FIXED: Optional math and diagrams + smaller size
+  // 🔥 UPDATED: Optional diagrams mentioned but not forced
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 CRITICAL FORMATTING RULES:
@@ -352,16 +344,10 @@ CRITICAL FORMATTING RULES:
 - NO HTML tags like <header> or <footer>
 - 600+ words total
 
-**MATH FORMATTING (Optional):**
-- Only use LaTeX math if you need to explain quantitative concepts
-- If used: inline math in single dollars ($x=2$), block math in double dollars ($$y=mx+b$$)
-- If no math is needed, simply write clear explanations
-
-**DIAGRAM RULES (Optional):**
-- Create Mermaid diagrams ONLY if they would genuinely help visualize complex concepts
+**DIAGRAMS (Optional):**
+- Create Mermaid diagrams ONLY if they help explain complex concepts
 - If used: Wrap in \`\`\`mermaid \`\`\` blocks
-- **STRICT SYNTAX:** Quote node labels with parentheses: A["User (Admin)"]
-- If no diagram is needed, skip this entirely
+- Quote node labels with parentheses: A["User (Admin)"]
 
 MANDATORY STRUCTURE:
 1) Introduction: Overview.
@@ -384,9 +370,18 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-function buildEnhancedHTML(content, bookTitle, diagramData) {
+// ==================== PDF GENERATION (MODIFIED FOR DIAGRAMS) ====================
+function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
   const cleaned = cleanUpAIText(content);
-  const formattedContent = formatMathAndContent(cleaned, diagramData);
+  const formattedContent = formatMath(cleaned);
+  
+  // Restore diagrams
+  const finalContent = formattedContent.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
+    const base64 = diagramData.blocks[i];
+    return base64 ? 
+      `<div style="text-align: center; margin: 2em 0;"><img src="${base64}" alt="Diagram" style="max-width: 85%; max-height: 300px; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);"></div>` 
+      : '';
+  });
   
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
@@ -408,16 +403,11 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
   
   <script>
     window.MathJax = {
-      tex: { 
-        inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], 
-        displayMath: [['$$', '$$']],
-        processEscapes: true
-      },
+      tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
       svg: { fontCache: 'global' }
     };
   </script>
   <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
@@ -463,7 +453,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
     </div>
     <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
   </div>
-  <div class="chapter-content">${marked.parse(formattedContent)}</div>
+  <div class="chapter-content">${marked.parse(finalContent)}</div>
   <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
   <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
 </body>
@@ -472,8 +462,10 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
 
 async function generatePDF(content, outputPath, bookTitle) {
   try {
+    // 🔥 ADDED: Process diagrams before building HTML
     logger.info('🎨 Rendering diagrams (if any)...');
     const { content: processedContent, diagrams } = await formatDiagrams(content);
+    
     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, diagrams);
     
     const form = new FormData();
@@ -491,7 +483,7 @@ async function generatePDF(content, outputPath, bookTitle) {
             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
             spacing: "5mm"
           },
-          waitDelay: 6000, 
+          waitDelay: 3000,
           printBackground: true,
           preferCSSPageSize: true
         }
@@ -515,9 +507,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const pdfBuffer = Buffer.from(arrayBuffer);
-    
+    const pdfBuffer = await response.buffer();
     fs.writeFileSync(outputPath, pdfBuffer);
     logger.info(`✅ PDF generated: ${outputPath}`);
     return outputPath;
@@ -605,7 +595,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
