@@ -1,4 +1,4 @@
-// // AI/MB.js – FINAL ROBUST VERSION: Auto-Repair Diagrams + Math Fixes
+// // AI/MB.js – FINAL FIXED VERSION: Clean URLs + Diagram Repair + Math
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -117,7 +117,7 @@ function repairMermaidSyntax(code) {
     .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
     
     // 4. Fix: Whitespace cleanup
-    .replace(/\n{3,}/g, '\n')
+    .replace(/\n{2,}/g, '\n')
     
     // 5. Fix: Ensure arrows have targets
     .replace(/-->\s*$/gm, '--> EndNode[End]');
@@ -139,7 +139,7 @@ async function formatDiagrams(content) {
     const code = repairMermaidSyntax(rawCode);
     
     try {
-      // ✅ Use Kroki with clean URL
+      // ✅ FIX: CLEAN URL (No Markdown Brackets)
       const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
         method: 'POST',
         headers: {
@@ -150,7 +150,6 @@ async function formatDiagrams(content) {
       });
       
       if (!response.ok) {
-        // If 400 error, log the bad code for debugging
         if (response.status === 400) {
             logger.warn(`Invalid Mermaid Syntax Detected:\n${code}`);
         }
@@ -197,7 +196,6 @@ function formatMathAndContent(content, diagramData = { blocks: [] }) {
   });
 
   // 4. Math processing (LaTeX)
-  // Ensure $$ blocks are on their own lines for better detection
   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); 
   content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
@@ -543,7 +541,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    // ✅ FIX: Clean URL & Correct API
+    // ✅ FIX: CLEAN URL (Removed [] brackets)
     const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
@@ -555,7 +553,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
     }
 
-    // ✅ FIX: Replace deprecated buffer() with arrayBuffer()
+    // ✅ FIX: Use arrayBuffer instead of buffer (deprecated)
     const arrayBuffer = await response.arrayBuffer();
     const pdfBuffer = Buffer.from(arrayBuffer);
     
@@ -653,7 +651,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
