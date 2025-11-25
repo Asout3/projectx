@@ -1,4 +1,4 @@
-// AI/MB.js – ORIGINAL CODE + DIAGRAM FEATURE ONLY
+// AI/MB.js – ORIGINAL CODE + DIAGRAM FEATURE ONLY Dog shit shti 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
