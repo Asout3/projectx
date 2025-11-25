@@ -1,4 +1,4 @@
-//AI/MB.js – FIXED VERSION: Correct asset handling for diagrams
+//AI/MB.js – FINAL FIX: Use buffers for SVG attachments
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -75,7 +75,6 @@ function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
     .replace(/^(?:Hi|Hello|Sure|Here).*?(\n\n|$)/gis, '')
-    // 🔥 FIXED: Don't remove figure/figcaption tags
     .replace(/<\/?(header|footer)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
@@ -127,7 +126,7 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION (DEBUGGED) ====================
+// ==================== DIAGRAM GENERATION ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
@@ -158,13 +157,12 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // 🔥 FIXED: Use exact filename reference, no extra whitespace, proper structure
+      // 🔥 FIXED: Use exact filename reference, no extra whitespace
       const htmlReplacement = `<figure class="diagram-container"><img src="${diagramId}" alt="Diagram" class="diagram"/><figcaption>Figure ${chapterNumber}.${diagramCount}: Process Diagram</figcaption></figure>`;
 
       content = content.replace(match[0], htmlReplacement);
       diagramFiles.push(diagramPath);
       
-      // 🔥 DEBUG LOGGING
       logger.info(`✅ Diagram ${diagramId}: ${svgBuffer.length} bytes written to ${diagramPath}`);
     } catch (error) {
       logger.error(`❌ Diagram generation failed: ${error.message}`);
@@ -373,7 +371,7 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-// ==================== PDF GENERATION ====================
+// ==================== PDF GENERATION (CRITICAL FIX) ====================
 function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -493,7 +491,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
     const instructions = {
       parts: [{ 
         html: "index.html",
-        assets: assetNames.length > 0 ? assetNames : undefined // Don't include empty array
+        assets: assetNames.length > 0 ? assetNames : undefined
       }],
       output: {
         format: "pdf",
@@ -520,23 +518,26 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       contentType: 'text/html'
     });
 
-    // 🔥 FIXED: Verify files exist and attach correctly
+    // 🔥 CRITICAL FIX: Use Buffer instead of Stream for SVGs
+    // This avoids the node-fetch form-data deprecation warning and ensures proper attachment
     diagramFiles.forEach(filePath => {
       if (!fs.existsSync(filePath)) {
         logger.error(`❌ Diagram file not found: ${filePath}`);
         return;
       }
       const filename = path.basename(filePath);
-      form.append(filename, fs.createReadStream(filePath), {
+      const svgBuffer = fs.readFileSync(filePath); // ✅ Use buffer like we do for HTML
+      form.append(filename, svgBuffer, {
         filename: filename,
         contentType: 'image/svg+xml'
       });
-      logger.info(`📎 Attached asset: ${filename}`);
+      logger.info(`📎 Attached asset (buffer): ${filename} (${svgBuffer.length} bytes)`);
     });
 
     // ✅ CORRECT: Plain URL without markdown syntax
     const nutrientApiUrl = 'https://api.nutrient.io/build'; 
 
+    logger.info(`🚀 Sending request to Nutrient API...`);
     const response = await fetch(nutrientApiUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
