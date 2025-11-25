@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL BRUTAL VERSION: 5 Chapters + SUBTOPICS + MATH + FORCED DIAGRAMS (KROKI)
+// AI/MB.js – BRUTAL UNIQUE DIAGRAMS + SYNTAX REPAIR
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -14,7 +14,6 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
   console.log('📂 DEV mode: Loaded .env file');
@@ -22,13 +21,11 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
 
-// 🔥 DEBUG LOG
 console.log('=== ENVIRONMENT DEBUG ===');
 console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
 console.log('=========================');
 
-// ==================== CORE SETUP ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.requestsPerMinute = requestsPerMinute;
@@ -77,7 +74,6 @@ const logger = winston.createLogger({
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// ==================== TEXT PROCESSING (FIXED) ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
@@ -94,12 +90,33 @@ function cleanUpAIText(text) {
     .replace(/\*\s*$/gm, '')
     .trim();
 
-  // 🔥 MATH FIX: Remove backslashes before dollar signs (\$ -> $)
   clean = clean.replace(/\\(\$)/g, '$');
   return clean;
 }
 
-// ==================== DIAGRAM RENDERING (KROKI - NO LOCAL DEPS) ====================
+// ==================== MERMAID SYNTAX REPAIR (NEW) ====================
+function repairMermaidSyntax(code) {
+  // Fix common AI mistakes that cause Kroki 400 errors
+  let fixed = code
+    // Remove trailing semicolons after arrows
+    .replace(/-->;\s*$/gm, '-->')
+    // Fix duplicate arrows like A --> B -->; C
+    .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
+    // Remove empty lines in the middle of diagrams
+    .replace(/\n{2,}/g, '\n')
+    // Fix labels with unescaped parentheses in node IDs
+    .replace(/(\[.*?\(.*?\).*?\])/g, (match) => {
+      // If node ID has parentheses, create a clean ID
+      const label = match.slice(1, -1); // remove brackets
+      const cleanLabel = label.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
+      return `[${label}|${cleanLabel}]`;
+    })
+    // Ensure every arrow has a target
+    .replace(/-->\s*$/gm, '--> EndNode[End]');
+  
+  return fixed.trim();
+}
+
 async function formatDiagrams(content) {
   const diagramBlocks = [];
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)\n```/g)];
@@ -107,11 +124,13 @@ async function formatDiagrams(content) {
   logger.info(`🔍 Found ${matches.length} mermaid code blocks`);
   
   for (let i = 0; i < matches.length; i++) {
-    const code = matches[i][1].trim();
+    const rawCode = matches[i][1].trim();
+    const code = repairMermaidSyntax(rawCode); // 🔥 FIX SYNTAX
+    
     logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}`);
+    logger.debug(`Diagram code:\n${code.substring(0, 100)}...`);
     
     try {
-      // 🔥 FIX: Use Kroki's POST API (no encoding issues, handles any size)
       const response = await fetch('https://kroki.io/mermaid/svg', {
         method: 'POST',
         headers: {
@@ -134,55 +153,12 @@ async function formatDiagrams(content) {
       logger.info(`✅ Diagram ${i + 1} rendered successfully`);
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      // Keep original code block with warning so user sees something
-      content = content.replace(matches[i][0], `\n> ⚠️ Diagram failed to render: \`${error.message}\`\n\n${matches[i][0]}`);
+      // Replace failed diagram with error block (no raw code)
+      content = content.replace(matches[i][0], `\n> ⚠️ Diagram rendering failed: Invalid syntax\n\n`);
     }
   }
   
   return { content, diagrams: { blocks: diagramBlocks } };
-}
-
-
-function formatMath(content, diagramData = { blocks: [] }) {
-  const tables = [];
-  const codeBlocks = [];
-
-  // Protect tables
-  content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
-    tables.push(tbl);
-    return `__TABLE__${tables.length - 1}__`;
-  });
-
-  // Protect fenced code
-  content = content.replace(/```[\w]*\n([\s\S]*?)\n```/g, (match, code) => {
-    codeBlocks.push(match);
-    return `__CODE__${codeBlocks.length - 1}__`;
-  });
-
-  // Protect inline code
-  content = content.replace(/`([^`]+)`/g, (match) => {
-    codeBlocks.push(match);
-    return `__CODE__${codeBlocks.length - 1}__`;
-  });
-
-  // 🔥 MATH FIX: Simplify math logic
-  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
-  content = content.replace(/\\wedge/g, '^');
-  content = content.replace(/\{\\\^\}/g, '^');
-
-  // Restore protected blocks
-  content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
-  content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
-  
-  // Restore diagrams as <img> tags
-  content = content.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
-    const base64 = diagramData.blocks[i];
-    return base64 ? 
-      `<img src="${base64}" alt="Diagram" style="max-width: 100%; height: auto; margin: 2em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid;" />` 
-      : '';
-  });
-
-  return content;
 }
 
 marked.setOptions({
@@ -334,7 +310,7 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 BRUTAL DIAGRAM PROMPT - FORCES AI TO GENERATE DIAGRAMS
+  // 🔥 ULTRA-BRUTAL UNIQUE DIAGRAM PROMPT
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 **CRITICAL FORMATTING RULES (VIOLATE AT YOUR PERIL):**
@@ -345,43 +321,43 @@ async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
 - NO HTML tags like <header> or <footer>
 - 600+ words total
 
-**DIAGRAM REQUIREMENTS (MANDATORY - DO NOT SKIP THIS SECTION):**
-- You MUST include AT LEAST 2 Mermaid.js diagrams in this chapter.
-- Wrap ALL diagrams in \`\`\`mermaid\`\`\` code blocks.
-- Valid diagram types: flowchart TD, sequenceDiagram, classDiagram, mindmap, pie, graph TD.
+**DIAGRAM REQUIREMENTS (MANDATORY - 100% UNIQUE PER CHAPTER):**
+- You MUST include EXACTLY 2 UNIQUE Mermaid.js diagrams in this chapter.
+- **THESE DIAGRAMS MUST BE DIFFERENT FROM ALL OTHER CHAPTERS** - no repetition!
+- Diagrams must be SPECIFIC to this chapter's subtopics:
+${subtopicList}
+- Wrap diagrams in \`\`\`mermaid\`\`\` code blocks.
+- **VALID SYNTAX ONLY** - test your diagram logic:
+  - Use: A[Node] --> B{Decision}
+  - NOT: A -->; B (trailing arrows are INVALID)
 - Example of CORRECT format:
 \`\`\`mermaid
 graph TD
-    A[User] --> B{Decision}
-    B -->|Yes| C[Action]
-    B -->|No| D[End]
+    A[Transaction] --> B{Verification}
+    B -->|Valid| C[Add to Mempool]
+    C --> D[Broadcast]
 \`\`\`
-- If a subtopic doesn't fit a diagram, create a diagram for a different concept in the chapter.
-- Place diagrams naturally after their relevant explanation paragraph.
-- FAILURE TO INCLUDE DIAGRAMS WILL RESULT IN INVALID OUTPUT.
+- Place diagrams AFTER the paragraph that explains each concept.
 
 **MATH FORMATTING RULES (CRITICAL):**
-- Use LaTeX for ALL mathematical expressions.
-- Wrap **inline math** in single dollar signs: $E = mc^2$.
-- Wrap **block math** in double dollar signs: $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
-- **DO NOT** escape the dollar signs (write $, not \\$).
-- **DO NOT** escape LaTeX backslashes (write \\frac, not \\\\frac).
+- Use LaTeX: $E = mc^2$ (inline), $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$ (block)
+- DO NOT escape dollar signs or backslashes.
 
-**MANDATORY CONTENT STRUCTURE:**
-1) Introduction: Brief overview.
-2) KEY SECTIONS: Create ### subsections for these topics (USE DIAGRAMS WHERE APPROPRIATE):
+MANDATORY STRUCTURE:
+1) Introduction
+2) ### Subsections for each subtopic (with UNIQUE diagrams)
 ${subtopicList}
-3) Practical Application: Real-world example (include Math if relevant).
-4) Further Reading: 2-3 references.
+3) Practical Application
+4) Further Reading
 
-Output ONLY the chapter content with embedded diagram code blocks.`;
+Output ONLY chapter content.`;
 
   const rawContent = await askAI(prompt, userId, bookTopic, {
     minLength: 1800,
     genOptions: { maxOutputTokens: 4000, temperature: 0.4 }
   });
   
-  // 🔥 Process diagrams before cleanup
+  // Process diagrams with syntax repair
   const { content: processedContent, diagrams } = await formatDiagrams(rawContent);
   const cleaned = cleanUpAIText(processedContent);
   
@@ -405,7 +381,6 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     .replace(/^\d+\.\s*/, '')
     .trim();
 
-  // 🔥 URL FIX: Cleaned hrefs/srcs (Removed []())
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -460,7 +435,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
     .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
-    img { max-width: 100%; height: auto; margin: 2em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid; }
+    img { max-width: 100%; height: auto; margin: 1.5em 0; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); page-break-inside: avoid; }
     .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
   </style>
 </head>
@@ -568,9 +543,12 @@ export async function generateBookS(rawTopic, userId) {
       
       const chapterResult = await generateChapter(bookTopic, chNum, info, safeUserId);
       
-      // 🔥 NEW: Store diagrams and update content
-      if (chapterResult.diagrams?.blocks) {
+      // 🔥 Store diagrams and log counts
+      if (chapterResult.diagrams?.blocks?.length > 0) {
+        logger.info(`   → Chapter ${chNum} has ${chapterResult.diagrams.blocks.length} diagrams`);
         allDiagrams.blocks.push(...chapterResult.diagrams.blocks);
+      } else {
+        logger.warn(`   → Chapter ${chNum} has NO diagrams! AI is misbehaving.`);
       }
       
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapterResult.content}\n\n---\n`;
@@ -593,7 +571,8 @@ export async function generateBookS(rawTopic, userId) {
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
     
-    // 🔥 NEW: Pass diagram data to PDF generator
+    logger.info(`📊 Total diagrams for entire book: ${allDiagrams.blocks.length}`);
+    
     await generatePDF(combined, pdfPath, bookTopic, allDiagrams);
 
     // Cleanup
@@ -625,7 +604,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
