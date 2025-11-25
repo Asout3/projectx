@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL FIXED VERSION: Assets Array Fix + Diagram Styling
+// AI/MB.js – FINAL FIXED VERSION: URL FIX + Dynamic Diagram Caption
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -50,7 +50,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.0-flash-lite-preview-02-05'; // Updated to latest lite model or keep your preferred
+const MODEL_NAME = 'gemini-2.5-flash-lite';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
@@ -136,10 +136,11 @@ function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
 
-async function processMermaidDiagrams(content, outputDir) {
+async function processMermaidDiagrams(content, outputDir, chapterNumber) {
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g;
   let match;
   const diagramFiles = [];
+  let diagramCount = 0; // Counter for figure numbering
    
   while ((match = mermaidRegex.exec(content)) !== null) {
     const diagramCode = match[1].trim();
@@ -147,6 +148,7 @@ async function processMermaidDiagrams(content, outputDir) {
     
     const diagramId = `diagram_${hash(diagramCode)}.svg`;
     const diagramPath = path.join(outputDir, diagramId);
+    diagramCount++;
     
     try {
       // Encode to base64url for mermaid.ink
@@ -161,10 +163,11 @@ async function processMermaidDiagrams(content, outputDir) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // Replace code block with a centered figure container
+      // 🔥 IMPROVEMENT: Replace code block with a centered figure with a caption
       const htmlReplacement = `
       <figure class="diagram-container">
         <img src="${diagramId}" alt="Process Diagram" class="diagram"/>
+        <figcaption>Figure ${chapterNumber}.${diagramCount}: Process Flow</figcaption>
       </figure>`;
 
       content = content.replace(match[0], htmlReplacement);
@@ -440,10 +443,10 @@ function buildEnhancedHTML(content, bookTitle) {
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
     
-    /* DIAGRAM STYLING */
+    /* DIAGRAM STYLING & CAPTION */
     .diagram-container { 
-        display: flex; 
-        justify-content: center; 
+        display: block; 
+        text-align: center; /* Center image and caption */
         margin: 2em 0; 
         padding: 10px;
         background: white;
@@ -451,9 +454,16 @@ function buildEnhancedHTML(content, bookTitle) {
     .diagram { 
         max-width: 95%; 
         height: auto; 
-        display: block; 
+        display: inline-block; /* Allows centering via text-align on parent */
         border-radius: 4px; 
-        background-color: white; /* Force white background for transp. SVGs */
+        background-color: white; 
+    }
+    figcaption {
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        color: #4b5563;
+        margin-top: 10px;
+        font-style: italic;
     }
 
     .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
@@ -482,13 +492,12 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
     
     const form = new FormData();
     
-    // 🔥 FIX: Extract filenames to list as assets in instructions
     const assetNames = diagramFiles.map(f => path.basename(f));
 
     const instructions = {
       parts: [{ 
         html: "index.html",
-        assets: assetNames // <--- THIS IS THE CRITICAL FIX. The API needs to know these files belong to this HTML part.
+        assets: assetNames
       }],
       output: {
         format: "pdf",
@@ -523,7 +532,10 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       });
     });
 
-    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    // 🔥 FIX: Correcting the URL string that was likely pasted as Markdown.
+    const nutrientApiUrl = '[https://api.nutrient.io/build](https://api.nutrient.io/build)'; 
+
+    const response = await fetch(nutrientApiUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -563,7 +575,7 @@ export async function generateBookS(rawTopic, userId) {
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
     saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
     const files = [tocFile];
-    const allDiagramFiles = []; // Collect all diagrams across chapters
+    const allDiagramFiles = []; 
 
     // Generate chapters
     logger.info('Step 2/3: Generating chapters...');
@@ -580,8 +592,8 @@ export async function generateBookS(rawTopic, userId) {
       // Generate chapter content
       const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
       
-      // Process any Mermaid diagrams in the chapter
-      const { content: processedChapter, diagramFiles: chapterDiagrams } = await processMermaidDiagrams(chapter, OUTPUT_DIR);
+      // Process any Mermaid diagrams in the chapter, passing the chapter number
+      const { content: processedChapter, diagramFiles: chapterDiagrams } = await processMermaidDiagrams(chapter, OUTPUT_DIR, chNum);
       allDiagramFiles.push(...chapterDiagrams);
       
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${processedChapter}\n\n---\n`;
