@@ -13,6 +13,7 @@
   "description": "",
   "dependencies": {
     "@google/generative-ai": "latest",
+    "@mermaid-js/mermaid-cli": "latest",
     "@sparticuz/chromium": "^119.0.0",
     "async": "^3.2.6",
     "axios": "^1.8.4",
