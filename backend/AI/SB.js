@@ -1,4 +1,4 @@
-//AI/MB.js – FIXED VERSION: URL syntax errors corrected
+//AI/MB.js – FIXED VERSION: Diagram rendering in PDF
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -22,11 +22,6 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
 } else {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
-
-console.log('=== ENVIRONMENT DEBUG ===');
-console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
-console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
-console.log('=========================');
 
 // ==================== CORE SETUP ====================
 class RateLimiter {
@@ -80,7 +75,8 @@ function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
     .replace(/^(?:Hi|Hello|Sure|Here).*?(\n\n|$)/gis, '')
-    .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
+    // 🔥 FIXED: Don't remove figure/figcaption tags - we need these for diagrams!
+    .replace(/<\/?(header|footer)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
@@ -131,7 +127,7 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION (FIXED) ====================
+// ==================== DIAGRAM GENERATION (IMPROVED) ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
@@ -153,7 +149,6 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
     try {
       // Encode to base64url for mermaid.ink
       const base64Code = Buffer.from(diagramCode).toString('base64url');
-      // 🔥 FIXED: Removed extra space in URL
       const imageUrl = `https://mermaid.ink/svg/${base64Code}?bgColor=FFFFFF`;
       
       // Fetch the SVG
@@ -163,20 +158,17 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
       const svgBuffer = await response.buffer();
       fs.writeFileSync(diagramPath, svgBuffer);
       
-      // Replace with centered figure and caption
-      const htmlReplacement = `
-      <figure class="diagram-container">
-        <img src="${diagramId}" alt="Process Diagram" class="diagram"/>
-        <figcaption>Figure ${chapterNumber}.${diagramCount}: Process Flow</figcaption>
-      </figure>`;
+      // 🔥 FIXED: Use raw HTML without extra indentation to prevent code block rendering
+      // Also added a div wrapper to ensure proper separation from markdown
+      const htmlReplacement = `<div class="diagram-wrapper">\n<figure class="diagram-container">\n<img src="${diagramId}" alt="Diagram" class="diagram"/>\n<figcaption>Figure ${chapterNumber}.${diagramCount}: Process Diagram</figcaption>\n</figure>\n</div>`;
 
       content = content.replace(match[0], htmlReplacement);
       diagramFiles.push(diagramPath);
       logger.info(`✅ Generated diagram: ${diagramId}`);
     } catch (error) {
       logger.error(`❌ Diagram generation failed: ${error.message}`);
-      // Graceful fallback
-      content = content.replace(match[0], '<p><em>[Diagram could not be generated]</em></p>');
+      // Graceful fallback - also not indented
+      content = content.replace(match[0], '\n<p><em>[Diagram could not be generated]</em></p>\n');
     }
   }
    
@@ -185,7 +177,6 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
 
 // ==================== MARKED SETUP ====================
 marked.setOptions({
-  headers: false,
   breaks: true,
   gfm: true,
   highlight: function(code, lang) {
@@ -397,7 +388,6 @@ function buildEnhancedHTML(content, bookTitle) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <!-- 🔥 FIXED: Removed markdown syntax from URLs -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -532,7 +522,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       });
     });
 
-    // ✅ FIXED: Removed markdown syntax from URL
+    // ✅ CORRECT: Plain URL without markdown syntax
     const nutrientApiUrl = 'https://api.nutrient.io/build'; 
 
     const response = await fetch(nutrientApiUrl, {
@@ -650,7 +640,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
