@@ -1,4 +1,4 @@
-//AI/MB.js – FINAL FIX: Use buffers for SVG attachments
+// //AI/MB.js – FINAL FIX: Embedded Base64 Images & Better Formatting
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -45,7 +45,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-lite';
+const MODEL_NAME = 'gemini-2.0-flash'; // Updated to latest reliable model, revert to 1.5-flash if needed
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
@@ -84,6 +84,9 @@ function cleanUpAIText(text) {
     })
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[\u2013\u2014]/g, '-')
+    // 🔥 FIX 1: TIGHTEN BOLD TAGS (Fixes the ** issue)
+    // Converts "** Text **" to "**Text**" so markdown parses it correctly
+    .replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**')
     .replace(/\*\s*$/gm, '')
     .trim();
 
@@ -126,23 +129,26 @@ function formatMath(content) {
   return content;
 }
 
-// ==================== DIAGRAM GENERATION ====================
+// ==================== DIAGRAM GENERATION (EMBEDDED FIX) ====================
 function hash(str) {
   return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
 }
 
-async function processMermaidDiagrams(content, outputDir, chapterNumber) {
+async function processMermaidDiagrams(content, chapterNumber) {
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g;
   let match;
-  const diagramFiles = [];
   let diagramCount = 0;
    
+  // We process matches sequentially to handle async fetching
+  const matches = [];
   while ((match = mermaidRegex.exec(content)) !== null) {
+    matches.push(match);
+  }
+
+  for (const match of matches) {
     const diagramCode = match[1].trim();
     if (!diagramCode) continue;
     
-    const diagramId = `diagram_${hash(diagramCode)}.svg`;
-    const diagramPath = path.join(outputDir, diagramId);
     diagramCount++;
     
     try {
@@ -155,28 +161,39 @@ async function processMermaidDiagrams(content, outputDir, chapterNumber) {
       if (!response.ok) throw new Error(`Mermaid.ink failed: ${response.status}`);
       
       const svgBuffer = await response.buffer();
-      fs.writeFileSync(diagramPath, svgBuffer);
       
-      // 🔥 FIXED: Use exact filename reference, no extra whitespace
-      const htmlReplacement = `<figure class="diagram-container"><img src="${diagramId}" alt="Diagram" class="diagram"/><figcaption>Figure ${chapterNumber}.${diagramCount}: Process Diagram</figcaption></figure>`;
+      // 🔥 FIX 2: EMBED AS BASE64 (Solves "Broken Image" issue)
+      // Instead of saving to file, we convert to base64 string and embed directly
+      const base64Svg = svgBuffer.toString('base64');
+      const dataUri = `data:image/svg+xml;base64,${base64Svg}`;
+      
+      // 🔥 FIX 3: CSS CLASSES (Solves "Two Pages" issue)
+      // Added max-height styling in the HTML style block below
+      const htmlReplacement = `
+      <figure class="diagram-container">
+        <img src="${dataUri}" alt="Process Diagram" class="diagram"/>
+        <figcaption>Figure ${chapterNumber}.${diagramCount}</figcaption>
+      </figure>`;
 
       content = content.replace(match[0], htmlReplacement);
-      diagramFiles.push(diagramPath);
       
-      logger.info(`✅ Diagram ${diagramId}: ${svgBuffer.length} bytes written to ${diagramPath}`);
+      logger.info(`✅ Diagram embedded (Chapter ${chapterNumber})`);
     } catch (error) {
       logger.error(`❌ Diagram generation failed: ${error.message}`);
-      content = content.replace(match[0], '<p><em>[Diagram could not be generated]</em></p>');
+      // Keep code block if generation fails, or replace with placeholder
+      content = content.replace(match[0], `> *[Diagram: Process Flow]*`);
     }
   }
    
-  return { content, diagramFiles };
+  return content;
 }
 
 // ==================== MARKED SETUP ====================
 marked.setOptions({
   breaks: true,
   gfm: true,
+  headerIds: false, // Prevents ID clutter
+  mangle: false,
   highlight: function(code, lang) {
     if (lang && hljs.getLanguage(lang)) {
       return hljs.highlight(code, { language: lang }).value;
@@ -230,7 +247,7 @@ function parseTOC(tocContent) {
     }
 
     const chapMatch = line.match(/^Chapter\s+\d+:\s*(.+)$/i) || line.match(/^(?:\d+[\.\):]|\d+\s+|[-\*•])\s*(.+)$/i);
-    
+     
     if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
       let title = chapMatch[1].trim().replace(/[:–—*]\s*$/, '').replace(/^\d+\.\s*/, '');
       if (title && title.length > 10 && !/^(introduction|chapter|basics|overview|conclusion)$/i.test(title)) {
@@ -336,12 +353,11 @@ CRITICAL FORMATTING RULES:
 - 600+ words total
 
 **DIAGRAM RULES:**
-- When explaining processes, algorithms, or relationships, include a Mermaid diagram:
+- When explaining complex processes or flows, include a Mermaid diagram:
 \`\`\`mermaid
 graph TD
     A[Start] --> B{Decision}
     B -->|Yes| C[Action]
-    B -->|No| D[End]
 \`\`\`
 
 **MATH FORMATTING RULES:**
@@ -361,7 +377,7 @@ Output ONLY the chapter content.`;
 
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1800,
-    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
+    genOptions: { maxOutputTokens: 4500, temperature: 0.4 }
   }));
 }
 
@@ -371,7 +387,7 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-// ==================== PDF GENERATION (CRITICAL FIX) ====================
+// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -386,23 +402,20 @@ function buildEnhancedHTML(content, bookTitle) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
+  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
+  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
       svg: { fontCache: 'none', scale: 0.95 }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
+  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
+  <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
@@ -431,20 +444,22 @@ function buildEnhancedHTML(content, bookTitle) {
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
     
-    /* DIAGRAM STYLING & CAPTION */
+    /* 🔥 DIAGRAM STYLING FIX 🔥 */
     .diagram-container { 
         display: block; 
-        text-align: center; /* Center image and caption */
-        margin: 2em 0; 
-        padding: 10px;
+        text-align: center;
+        margin: 2em auto; 
+        padding: 15px;
         background: white;
+        page-break-inside: avoid; /* Keeps diagram and caption together */
     }
     .diagram { 
-        max-width: 95%; 
-        height: auto; 
-        display: inline-block; /* Allows centering via text-align on parent */
-        border-radius: 4px; 
-        background-color: white; 
+        max-width: 100%; 
+        max-height: 50vh; /* LIMIT HEIGHT to 50% of viewport to prevent 2-page spread */
+        width: auto;
+        height: auto;
+        display: inline-block; 
+        object-fit: contain;
     }
     figcaption {
         font-family: 'Inter', sans-serif;
@@ -474,24 +489,19 @@ function buildEnhancedHTML(content, bookTitle) {
 </html>`;
 }
 
-async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
+async function generatePDF(content, outputPath, bookTitle) {
   try {
+    // Note: We no longer pass diagramFiles because they are embedded directly in the HTML!
     const enhancedHtml = buildEnhancedHTML(content, bookTitle);
     
-    // 🔥 DEBUG: Log what we're sending
     logger.info(`📄 HTML length: ${enhancedHtml.length} bytes`);
-    logger.info(`📎 Assets to attach: ${diagramFiles.length}`);
-    diagramFiles.forEach(f => logger.info(`  - ${path.basename(f)} (${fs.existsSync(f) ? fs.statSync(f).size + ' bytes' : 'MISSING'})`));
 
     const form = new FormData();
     
-    const assetNames = diagramFiles.map(f => path.basename(f));
-    logger.info(`📎 Asset names for Nutrient: ${JSON.stringify(assetNames)}`);
-
     const instructions = {
       parts: [{ 
         html: "index.html",
-        assets: assetNames.length > 0 ? assetNames : undefined
+        // No assets needed anymore because we embedded SVGs as Base64!
       }],
       output: {
         format: "pdf",
@@ -518,24 +528,7 @@ async function generatePDF(content, outputPath, bookTitle, diagramFiles = []) {
       contentType: 'text/html'
     });
 
-    // 🔥 CRITICAL FIX: Use Buffer instead of Stream for SVGs
-    // This avoids the node-fetch form-data deprecation warning and ensures proper attachment
-    diagramFiles.forEach(filePath => {
-      if (!fs.existsSync(filePath)) {
-        logger.error(`❌ Diagram file not found: ${filePath}`);
-        return;
-      }
-      const filename = path.basename(filePath);
-      const svgBuffer = fs.readFileSync(filePath); // ✅ Use buffer like we do for HTML
-      form.append(filename, svgBuffer, {
-        filename: filename,
-        contentType: 'image/svg+xml'
-      });
-      logger.info(`📎 Attached asset (buffer): ${filename} (${svgBuffer.length} bytes)`);
-    });
-
-    // ✅ CORRECT: Plain URL without markdown syntax
-    const nutrientApiUrl = 'https://api.nutrient.io/build'; 
+    const nutrientApiUrl = '[https://api.nutrient.io/build](https://api.nutrient.io/build)'; 
 
     logger.info(`🚀 Sending request to Nutrient API...`);
     const response = await fetch(nutrientApiUrl, {
@@ -578,7 +571,6 @@ export async function generateBookS(rawTopic, userId) {
     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
     saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
     const files = [tocFile];
-    const allDiagramFiles = []; 
 
     // Generate chapters
     logger.info('Step 2/3: Generating chapters...');
@@ -595,9 +587,9 @@ export async function generateBookS(rawTopic, userId) {
       // Generate chapter content
       const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
       
-      // Process any Mermaid diagrams in the chapter, passing the chapter number
-      const { content: processedChapter, diagramFiles: chapterDiagrams } = await processMermaidDiagrams(chapter, OUTPUT_DIR, chNum);
-      allDiagramFiles.push(...chapterDiagrams);
+      // Process any Mermaid diagrams in the chapter
+      // returns the text with embedded Base64 images
+      const processedChapter = await processMermaidDiagrams(chapter, chNum);
       
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${processedChapter}\n\n---\n`;
       
@@ -619,16 +611,10 @@ export async function generateBookS(rawTopic, userId) {
     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
     
-    // 🔥 DEBUG: Log final state
-    logger.info(`📎 Total diagram files: ${allDiagramFiles.length}`);
-    allDiagramFiles.forEach(f => logger.info(`  Final asset: ${path.basename(f)}`));
-    
-    // Pass diagram files to PDF generator
-    await generatePDF(combined, pdfPath, bookTopic, allDiagramFiles);
+    await generatePDF(combined, pdfPath, bookTopic);
 
     // Cleanup
     files.forEach(deleteFile);
-    allDiagramFiles.forEach(deleteFile); // Clean up diagram files too
     userHistories.delete(safeUserId);
     
     logger.info(`=== SUCCESS: ${pdfPath} ===`);
@@ -657,7 +643,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
 
 
 
