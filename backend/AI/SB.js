@@ -108,17 +108,23 @@ async function formatDiagrams(content) {
   
   for (let i = 0; i < matches.length; i++) {
     const code = matches[i][1].trim();
-    logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}: ${code.substring(0, 60)}...`);
+    logger.info(`🎨 Rendering diagram ${i + 1}/${matches.length}`);
     
     try {
-      // Use Kroki cloud service (no local install needed)
-      const krokiUrl = 'https://kroki.io/mermaid/svg';
-      const encoded = Buffer.from(code).toString('base64url');
-      const response = await fetch(`${krokiUrl}/${encoded}`, {
-        headers: { 'Accept': 'image/svg+xml' }
+      // 🔥 FIX: Use Kroki's POST API (no encoding issues, handles any size)
+      const response = await fetch('https://kroki.io/mermaid/svg', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+          'Accept': 'image/svg+xml'
+        },
+        body: code
       });
       
-      if (!response.ok) throw new Error(`Kroki error: ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Kroki error: ${response.status} - ${errorText}`);
+      }
       
       const svg = await response.text();
       const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
@@ -128,12 +134,14 @@ async function formatDiagrams(content) {
       logger.info(`✅ Diagram ${i + 1} rendered successfully`);
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      // Leave original code block if render fails
+      // Keep original code block with warning so user sees something
+      content = content.replace(matches[i][0], `\n> ⚠️ Diagram failed to render: \`${error.message}\`\n\n${matches[i][0]}`);
     }
   }
   
   return { content, diagrams: { blocks: diagramBlocks } };
 }
+
 
 function formatMath(content, diagramData = { blocks: [] }) {
   const tables = [];
