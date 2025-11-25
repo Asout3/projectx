@@ -1,4 +1,4 @@
-// // AI/MB.js – FINAL MERGED VERSION: Chapters + Math + Mermaid Diagrams
+// // AI/MB.js – FINAL ROBUST VERSION: Auto-Repair Diagrams + Math Fixes
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -14,7 +14,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 🔥 CRITICAL FIX: Only load .env locally, NOT on Railway
+// 🔥 ENVIRONMENT SETUP
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
   console.log('📂 DEV mode: Loaded .env file');
@@ -22,7 +22,6 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
   console.log('🚀 PROD mode: Using Railway environment variables');
 }
 
-// 🔥 DEBUG LOG
 console.log('=== ENVIRONMENT DEBUG ===');
 console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
@@ -99,26 +98,28 @@ function cleanUpAIText(text) {
   return clean;
 }
 
-// ==================== MERMAID DIAGRAM LOGIC ====================
+// ==================== ROBUST DIAGRAM LOGIC ====================
 
 function repairMermaidSyntax(code) {
   let fixed = code
-    // Fix trailing semicolons after arrows
-    .replace(/-->;\s*$/gm, '-->')
-    // Fix duplicate arrows: A --> B -->; C
-    .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
-    // Remove double newlines
-    .replace(/\n{2,}/g, '\n')
-    // Fix labels with parentheses/special chars in node IDs
-    .replace(/(\[.*?\(.*?\).*?\])/g, (match) => {
-      const label = match.slice(1, -1);
-      const cleanLabel = label.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
-      if (cleanLabel !== label) {
-        return `[${label}|${cleanLabel}]`;
-      }
-      return match;
+    // 1. Fix: Remove "mermaid" if repeated inside the block
+    .replace(/^mermaid\s*\n/i, '')
+    
+    // 2. Fix: Parentheses inside node labels MUST be quoted
+    // Changes A[User (Admin)] to A["User (Admin)"]
+    .replace(/\[([^\]]*?\(.*?\)[^\]]*?)\]/g, (match, content) => {
+      if (content.startsWith('"') && content.endsWith('"')) return match; // Already quoted
+      return `["${content.replace(/"/g, "'")}"]`; // Quote it, escape inner quotes
     })
-    // Ensure every arrow has a target
+
+    // 3. Fix: Trailing semicolons and arrows
+    .replace(/-->;\s*$/gm, '-->')
+    .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
+    
+    // 4. Fix: Whitespace cleanup
+    .replace(/\n{3,}/g, '\n')
+    
+    // 5. Fix: Ensure arrows have targets
     .replace(/-->\s*$/gm, '--> EndNode[End]');
   
   return fixed.trim();
@@ -126,6 +127,7 @@ function repairMermaidSyntax(code) {
 
 async function formatDiagrams(content) {
   const diagramBlocks = [];
+  // Regex to catch mermaid blocks
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)```/g)];
   
   if (matches.length > 0) {
@@ -137,8 +139,8 @@ async function formatDiagrams(content) {
     const code = repairMermaidSyntax(rawCode);
     
     try {
-      // ✅ FIX: Clean URL
-      const response = await fetch('https://kroki.io/mermaid/svg', {
+      // ✅ Use Kroki with clean URL
+      const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
@@ -148,6 +150,10 @@ async function formatDiagrams(content) {
       });
       
       if (!response.ok) {
+        // If 400 error, log the bad code for debugging
+        if (response.status === 400) {
+            logger.warn(`Invalid Mermaid Syntax Detected:\n${code}`);
+        }
         throw new Error(`Kroki error: ${response.status}`);
       }
       
@@ -156,9 +162,12 @@ async function formatDiagrams(content) {
       
       diagramBlocks.push(base64);
       content = content.replace(matches[i][0], `__DIAGRAM__${diagramBlocks.length - 1}__`);
+      logger.info(`✅ Diagram ${i+1} rendered successfully.`);
+      
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      content = content.replace(matches[i][0], `\n> *⚠️ Diagram generation failed.*\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
+      // Fallback: Leave code block but add warning
+      content = content.replace(matches[i][0], `\n> *⚠️ Diagram generation failed (Syntax Error). Raw code below:*\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
     }
   }
   
@@ -176,7 +185,7 @@ function formatMathAndContent(content, diagramData = { blocks: [] }) {
   });
 
   // 2. Protect fenced code (non-mermaid)
-  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
+  content = content.replace(/```(?!mermaid)[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
@@ -188,7 +197,8 @@ function formatMathAndContent(content, diagramData = { blocks: [] }) {
   });
 
   // 4. Math processing (LaTeX)
-  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); // Convert \[ \] to $$ $$
+  // Ensure $$ blocks are on their own lines for better detection
+  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); 
   content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
 
@@ -361,7 +371,7 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 UPDATED PROMPT: Now requests Mermaid Diagrams!
+  // 🔥 UPDATED PROMPT: Strict instructions to prevent breakage
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 CRITICAL FORMATTING RULES:
@@ -372,29 +382,25 @@ CRITICAL FORMATTING RULES:
 - NO HTML tags like <header> or <footer>
 - 600+ words total
 
-**MATH FORMATTING RULES (CRITICAL):**
+**MATH FORMATTING (CRITICAL):**
 - Use LaTeX for ALL mathematical expressions.
-- Wrap **inline math** in single dollar signs, e.g., $E = mc^2$.
-- Wrap **block math** (centered equations) in double dollar signs, e.g., $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
-- **DO NOT** escape the dollar signs.
+- Wrap **inline math** in single dollar signs: $E = mc^2$.
+- Wrap **block math** in double dollar signs: $$x = y + z$$.
+- **DO NOT** use backslashes before dollar signs.
 
-**VISUALIZATION RULES (DIAGRAMS):**
-- If a concept, process, or workflow is complex, **YOU MUST** create a diagram for it.
-- Use **Mermaid.js** syntax wrapped in code blocks, like this:
-  \`\`\`mermaid
-  graph TD;
-    A[Start] --> B{Decision};
-    B -->|Yes| C[Process];
-    B -->|No| D[Stop];
-  \`\`\`
-- Use 'graph TD', 'sequenceDiagram', or 'mindmap'.
+**DIAGRAM RULES (MERMAID JS):**
+- Create **Mermaid diagrams** for complex flows/concepts.
+- Wrap in \`\`\`mermaid \`\`\` blocks.
+- **STRICT SYNTAX RULE:** Do NOT use parentheses ( ) inside node labels unless you wrap the text in quotes.
+  - WRONG: A[User (Admin)]
+  - CORRECT: A["User (Admin)"]
+- Use 'graph TD' or 'sequenceDiagram'.
 
-MANDATORY CONTENT STRUCTURE:
-1) Introduction: A brief overview.
-2) KEY SECTIONS: Create a subsection (### Heading) for EACH subtopic:
+MANDATORY STRUCTURE:
+1) Introduction: Overview.
+2) SECTIONS: Create a subsection (###) for EACH subtopic:
 ${subtopicList}
-
-3) Practical Application/Exercise: A real-world example (include Math/Diagrams if relevant).
+3) Practical Application: Real-world example (Use Math/Diagrams).
 4) Further Reading: 2-3 references.
 
 Output ONLY the chapter content.`;
@@ -437,15 +443,19 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
   
   <script>
     window.MathJax = {
-      tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
-      svg: { fontCache: 'none', scale: 0.95 }
+      tex: { 
+        inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], 
+        displayMath: [['$$', '$$']],
+        processEscapes: true
+      },
+      svg: { fontCache: 'global' }
     };
   </script>
   <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
+  
   <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js)"></script>
   <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js)"></script>
   <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js)"></script>
-  <script src="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js)"></script>
   <link href="[https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css](https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
   
   <style>
@@ -497,9 +507,11 @@ function buildEnhancedHTML(content, bookTitle, diagramData) {
 
 async function generatePDF(content, outputPath, bookTitle) {
   try {
+    // 🔥 STEP 1: Process Diagrams (Kroki Fetch) BEFORE building HTML
     logger.info('🎨 Rendering diagrams (if any)...');
     const { content: processedContent, diagrams } = await formatDiagrams(content);
     
+    // 🔥 STEP 2: Build HTML with Diagram Data
     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, diagrams);
     
     const form = new FormData();
@@ -517,7 +529,8 @@ async function generatePDF(content, outputPath, bookTitle) {
             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
             spacing: "5mm"
           },
-          waitDelay: 3000,
+          // 🔥 MATH FIX: Increased delay to 6s to let MathJax render fully
+          waitDelay: 6000, 
           printBackground: true,
           preferCSSPageSize: true
         }
@@ -530,8 +543,8 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    // ✅ FIX: Clean URL
-    const response = await fetch('https://api.nutrient.io/build', {
+    // ✅ FIX: Clean URL & Correct API
+    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -542,7 +555,10 @@ async function generatePDF(content, outputPath, bookTitle) {
       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
     }
 
-    const pdfBuffer = await response.buffer();
+    // ✅ FIX: Replace deprecated buffer() with arrayBuffer()
+    const arrayBuffer = await response.arrayBuffer();
+    const pdfBuffer = Buffer.from(arrayBuffer);
+    
     fs.writeFileSync(outputPath, pdfBuffer);
     logger.info(`✅ PDF generated: ${outputPath}`);
     return outputPath;
