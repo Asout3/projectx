@@ -22,7 +22,7 @@ if (!process.env.RAILWAY_ENVIRONMENT) {
 }
 
 console.log('=== ENVIRONMENT DEBUG ===');
-console.log('GEMINI_API_KEY exists?:', !!process.env.GEMINI_API_KEY);
+console.log('GEMINI_API_KEY exists? meow meow meow:', !!process.env.GEMINI_API_KEY);
 console.log('NUTRIENT_API_KEY exists?:', !!process.env.NUTRIENT_API_KEY);
 console.log('=========================');
 
@@ -109,7 +109,7 @@ function repairMermaidSyntax(code) {
   return fixed.trim();
 }
 
-async function formatDiagrams(content) {
+async function formatDiagrams(content) {   // Dog shit
   const diagramBlocks = [];
   const matches = [...content.matchAll(/```mermaid\n([\s\S]*?)```/g)];
   
