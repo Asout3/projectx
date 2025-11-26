@@ -1,4 +1,4 @@
-// AI/MB.js – POLISHED & FIXED
+// AI/MB.js – FIXED VERSION
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -47,7 +47,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-1.5-flash'; // Suggest using 1.5 Flash for speed/cost or Pro for quality
+const MODEL_NAME = 'gemini-2.5-flash-lite'; // 🔥 FIXED: Updated to correct model name
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
@@ -78,11 +78,11 @@ function cleanUpAIText(text) {
   if (!text) return '';
   let clean = text
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-    .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '') // Remove HTML tags AI might add
+    .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
-    // Fix: Tighten bold syntax so 'marked' picks it up (e.g., "** text **" -> "**text**")
-    .replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**')
+    // 🔥 FIXED: Improved bold syntax cleanup to handle various spacing
+    .replace(/\*\*\s*(.+?)\s*\*\*/g, '**$1**') // Handles ** text ** -> **text**
     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
       if (match.includes('`') || match.includes('```')) return match;
       return p1 + p2;
@@ -96,7 +96,7 @@ function cleanUpAIText(text) {
   return clean;
 }
 
-// ==================== DIAGRAM LOGIC (IMPROVED) ====================
+// ==================== DIAGRAM LOGIC (WITH CAPTIONS) ====================
 function repairMermaidSyntax(code) {
   let fixed = code
     .replace(/^mermaid\s*\n/i, '')
@@ -114,29 +114,24 @@ function repairMermaidSyntax(code) {
 async function formatDiagrams(content) {
   const diagramBlocks = [];
   
-  // REGEX FIX: Capture optional "Figure: Title" line before the code block
-  // Looks for: Line starting with Figure or Caption, then the Code Block
-  const regex = /(?:(?:\*\*|__)?(?:Figure|Caption)\s*[:\-]\s*(.*)(?:\*\*|__)?\s*\n)?\s*```mermaid\n([\s\S]*?)```/gi;
-  
+  // 🔥 FIXED: Better regex to capture caption before diagram block
+  const regex = /(?:\*\*Figure\s*\d+\.\d+:\s*(.+?)\*\*\s*\n)?```mermaid\n([\s\S]*?)```/gi;
   const matches = [...content.matchAll(regex)];
   
   if (matches.length > 0) {
     logger.info(`🔍 Found ${matches.length} mermaid code blocks. Rendering...`);
   }
   
-  // We process strings, so we need to do replacements carefully. 
-  // We will build a temporary map to avoid regex overlap issues during replacement.
-  let replacements = [];
-
-  for (let i = 0; i < matches.length; i++) {
-    const fullMatch = matches[i][0];
-    const captionText = matches[i][1] ? matches[i][1].trim() : `Diagram ${i + 1}`;
-    const rawCode = matches[i][2].trim();
-    
+  // Process in reverse to maintain correct indices
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const match = matches[i];
+    const captionText = match[1] ? match[1].trim() : `Figure ${i + 1}`;
+    const rawCode = match[2].trim();
     const code = repairMermaidSyntax(rawCode);
     
     try {
-      const response = await fetch('[https://kroki.io/mermaid/svg](https://kroki.io/mermaid/svg)', {
+      // 🔥 FIXED: Removed space from URL
+      const response = await fetch('https://kroki.io/mermaid/svg', {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain',
@@ -155,30 +150,19 @@ async function formatDiagrams(content) {
       const svg = await response.text();
       const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
       
-      // Store both image and caption
-      diagramBlocks.push({
+      diagramBlocks.unshift({
         base64: base64,
         caption: captionText
       });
-
-      // Schedule replacement
-      replacements.push({
-        target: fullMatch,
-        replacement: `__DIAGRAM__${diagramBlocks.length - 1}__`
-      });
       
-      logger.info(`✅ Diagram rendered: "${captionText}"`);
+      content = content.slice(0, match.index) + `__DIAGRAM__${diagramBlocks.length - 1}__` + content.slice(match.index + match[0].length);
+      
+      logger.info(`✅ Diagram ${diagramBlocks.length} rendered: "${captionText}"`);
       
     } catch (error) {
       logger.error(`❌ Failed to render diagram ${i + 1}: ${error.message}`);
-      // On failure, remove the block
-      replacements.push({ target: fullMatch, replacement: '' });
+      content = content.replace(match[0], '');
     }
-  }
-
-  // Apply replacements
-  for (const rep of replacements) {
-    content = content.replace(rep.target, rep.replacement);
   }
   
   return { content, diagrams: { blocks: diagramBlocks } };
@@ -188,14 +172,12 @@ function formatMath(content) {
   const tables = [];
   const codeBlocks = [];
 
-  // Hide tables
   content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
     tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
 
-  // Hide code blocks to protect them from math formatting
-  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match) => {
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
@@ -209,7 +191,6 @@ function formatMath(content) {
   content = content.replace(/\\wedge/g, '^'); 
   content = content.replace(/\{\\\^\}/g, '^');
 
-  // Restore
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
 
@@ -220,8 +201,12 @@ marked.setOptions({
   headerIds: false,
   breaks: true,
   gfm: true,
-  // We disable internal highlight because we will use Prism in the browser/PDF step
-  highlight: null 
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return code;
+  }
 });
 
 function getHistoryFile(userId) {
@@ -361,7 +346,7 @@ REQUIREMENTS (FOLLOW EXACTLY):
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 UPDATED PROMPT: Explicit instructions for captions and bolding
+  // 🔥 UPDATED: Clear instructions for captions and bold
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
 
 CRITICAL FORMATTING RULES:
@@ -369,13 +354,12 @@ CRITICAL FORMATTING RULES:
 - Do NOT repeat the title as a second heading
 - Use ### for ALL subsections
 - ALL tables MUST use strict GitHub Markdown table syntax
-- Use **Bold** text for key terms and concepts.
+- Use **Bold** for key terms and important concepts (no spaces inside **)
 - 600+ words total
 
 **DIAGRAMS:**
 - Create Mermaid diagrams ONLY if they help explain complex concepts.
-- **IMPORTANT**: Before every mermaid block, you MUST write a caption line like this:
-  "Figure: [Short Description of the diagram]"
+- Add caption BEFORE each diagram: "**Figure ${chapterNumber}.X: Description**" (X starts at 1)
 - Then the mermaid block immediately after.
 - Quote node labels: A["User (Admin)"]
 
@@ -400,25 +384,21 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, { minLength: 1200 }));
 }
 
-// ==================== PDF GENERATION (ENHANCED HTML) ====================
+// ==================== PDF GENERATION (ENHANCED) ====================
 function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   
-  // RESTORE DIAGRAMS WITH CAPTIONS
-  // The diagramData.blocks array now contains objects: { base64, caption }
+  // 🔥 FIXED: Restore diagrams with proper figure/figcaption structure
   const finalContent = formattedContent.replace(/__DIAGRAM__(\d+)__/g, (_, i) => {
     const block = diagramData.blocks[i];
     if (!block) return '';
     
-    // We use a <figure> tag for semantic correctness and styling
-    // We extract the number automatically based on index
-    const figNum = parseInt(i) + 1;
     return `
       <figure style="margin: 2.5em 0; text-align: center; page-break-inside: avoid;">
         <img src="${block.base64}" alt="${block.caption}" style="max-width: 90%; max-height: 400px; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);">
-        <figcaption style="margin-top: 10px; font-family: 'Inter', sans-serif; font-size: 13px; color: #52525b; font-weight: 600;">
-          Figure ${figNum}: ${block.caption}
+        <figcaption style="margin-top: 10px; font-family: 'Inter', sans-serif; font-size: 13px; color: #52525b; font-weight: 600; font-style: italic;">
+          ${block.caption}
         </figcaption>
       </figure>
     `;
@@ -438,10 +418,9 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
   
-  <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
-  <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
-  <link href="[https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap](https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap)" rel="stylesheet">
-  <link href="[https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap](https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap)" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
   
   <script>
     window.MathJax = {
@@ -449,9 +428,8 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
       svg: { fontCache: 'global' }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="[https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js](https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js)"></script>
-  
-  <link href="[https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css](https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css)" rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
@@ -470,10 +448,10 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
         hyphens: auto; 
     }
 
-    /* 🔥 FORCE BOLD RENDERING IN PDF */
+    /* 🔥 FIXED: FORCE BOLD RENDERING IN PDF */
     strong, b {
         font-weight: 700 !important;
-        color: #111827 !important; /* Slightly darker than body text */
+        color: #111827 !important;
     }
 
     /* Cover Page */
@@ -486,6 +464,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     /* Headers */
     h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; text-align: left; }
     h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
+    h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
     h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
     h3 { font-size: 18px; color: #6b7280; }
     
@@ -495,23 +474,22 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
     /* Inline Code */
     code { background: #f3f4f6; padding: 2px 6px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 12px; border-radius: 4px; color: #ef4444; font-weight: 500; }
     
-    /* 🔥 IMPROVED CODE BLOCKS (Mac Style + Wrapping) */
-    pre[class*="language-"] {
-        background: #1e1e1e !important;
+    /* 🔥 FIXED CODE BLOCKS: Enable horizontal scrolling instead of wrapping */
+    pre {
+        background: #1e1e1e;
         margin: 1.5em 0;
         border-radius: 8px;
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         border: 1px solid #333;
-        overflow: hidden; /* Manage overflow manually */
-        padding: 0; /* Clear padding for the header */
+        overflow-x: auto; /* Enable horizontal scrolling */
+        padding: 0;
     }
     
-    /* The Mac-style header */
-    pre[class*="language-"]::before {
+    pre::before {
         content: "● ● ●";
         display: block;
         background: #2d2d2d;
-        color: #555; /* Dots color hack */
+        color: #555;
         font-size: 14px;
         letter-spacing: 2px;
         padding: 8px 15px;
@@ -519,8 +497,7 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
         font-family: sans-serif;
     }
     
-    /* The code area */
-    pre[class*="language-"] code {
+    pre code {
         display: block;
         padding: 15px 20px;
         background: transparent;
@@ -529,11 +506,9 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
         font-size: 12px;
         line-height: 1.6;
         border: none;
-        
-        /* 🔥 THE FIX FOR CUTTING OFF: Force wrap! */
-        white-space: pre-wrap !important;
-        word-break: break-all;
-        word-wrap: break-word;
+        white-space: pre !important; /* Preserve formatting, enable scroll */
+        word-wrap: normal;
+        min-width: 100%;
     }
 
     blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
@@ -558,11 +533,11 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
   <div class="chapter-content">${marked.parse(finalContent)}</div>
   <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
   
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js](https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js)"></script>
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js](https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js)"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => { 
-        Prism.plugins.autoloader.languages_path = '[https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/](https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/)';
+        Prism.plugins.autoloader.languages_path = 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/';
         Prism.highlightAll(); 
     });
   </script>
@@ -573,10 +548,8 @@ function buildEnhancedHTML(content, bookTitle, diagramData = { blocks: [] }) {
 async function generatePDF(content, outputPath, bookTitle) {
   try {
     logger.info('🎨 Rendering diagrams (if any)...');
-    // Step 1: Extract diagrams AND captions
     const { content: processedContent, diagrams } = await formatDiagrams(content);
     
-    // Step 2: Build HTML with captions and improved CSS
     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, diagrams);
     
     const form = new FormData();
@@ -607,7 +580,8 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    const response = await fetch('[https://api.nutrient.io/build](https://api.nutrient.io/build)', {
+    // 🔥 FIXED: Removed space from URL
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -655,7 +629,7 @@ export async function generateBookS(rawTopic, userId) {
 
       const chNum = i + 1;
       const info = chapterInfos[i];
-      logger.info(` ${chNum}. ${info.title}`);
+      logger.info(`  ${chNum}. ${info.title}`);
       
       const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapter}\n\n---\n`;
