@@ -1,4 +1,4 @@
-// AI/MB.js – FINAL FIXED VERSION: 10 Chapters, Subtopics Enforced + MATH FIXES + CLEAN URLS + DIAGRAM CAPTIONS
+// AI/MB.js – FINAL FIXED VERSION: 10 Chapters, Subtopics Enforced + MATH FIXES + DIAGRAM CAPTIONS
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -38,7 +38,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-lite'; // Updated model name if needed
+const MODEL_NAME = 'gemini-2.5-flash-lite';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
@@ -297,12 +297,14 @@ function parseTOC(tocContent) {
   const valid = chapters.filter(c => c.subtopics.length >= 3);
   logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
   
+  // 🔥 CHANGED: Changed from 5 to 10 to force limit
   return valid.slice(0, 10); 
 }
 
 function generateFallbackTOC(bookTopic) {
   const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
   
+  // 🔥 CHANGED: Increased fallback to 10 chapters
  const base = [
   "Introduction to Core Concepts",
   "Essential Principles and Practices", 
@@ -388,6 +390,7 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
 
 // ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
+  // 🔥 CHANGED: Requested EXACTLY 10 chapters in prompt
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 REQUIREMENTS (FOLLOW EXACTLY):
 - Output EXACTLY 10 chapters
@@ -416,6 +419,7 @@ Chapter 1: Getting Started
       const cleaned = cleanUpAIText(rawTOC);
       const parsed = parseTOC(cleaned);
 
+      // 🔥 CHANGED: Validation check for 10 chapters
       if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
         logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
         return { raw: cleaned, parsed };
@@ -465,7 +469,7 @@ MANDATORY CONTENT STRUCTURE:
 2) KEY SECTIONS: You MUST create a specific subsection (### Heading) for EACH of the following subtopics:
  ${subtopicList}
 
-3) Practical Application/Exercise: A real-world example (include Math if relevant).
+3) Practical Application/Exercise: A real-world example or exercise.
 4) Further Reading: 2-3 references.
 
 Output ONLY the chapter content.`;
