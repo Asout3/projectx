@@ -1,4 +1,3 @@
-// AI/MB.js – FINAL FIXED VERSION: 10 Chapters, Subtopics Enforced + MATH FIXES + DIAGRAM CAPTIONS
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -51,6 +50,7 @@ function ensureGenAI() {
   genAI = new GoogleGenerativeAI(key);
   return genAI;
 }
+
 const userHistories = new Map();
 
 const logger = winston.createLogger({
@@ -83,12 +83,11 @@ function cleanUpAIText(text) {
     .replace(/\*\s*$/gm, '')
     .trim();
 
-  // 🔥 MATH FIX: Remove backslashes before dollar signs (\$ -> $)
   clean = clean.replace(/\\(\$)/g, '$');
   return clean;
 }
 
-// ==================== DIAGRAM LOGIC (UPDATED FOR CAPTIONS) ====================
+// ==================== DIAGRAM LOGIC ====================
 function repairMermaidSyntax(code) {
   let fixed = code
     .replace(/^mermaid\s*\n/i, '')
@@ -103,15 +102,13 @@ function repairMermaidSyntax(code) {
   return fixed.trim();
 }
 
-async function formatDiagrams(content) { // Updated for captions and per-chapter numbering
+async function formatDiagrams(content) {
   const figures = [];
   const diagramCounts = {};
   const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
 
-  // Find all chapter positions
   const chapterMatches = [...content.matchAll(/# Chapter (\d+):/g)];
   const chapterPositions = chapterMatches.map(m => ({ num: parseInt(m[1]), pos: m.index }));
-
   const matches = [...content.matchAll(diagramRegex)];
 
   if (matches.length > 0) {
@@ -124,7 +121,6 @@ async function formatDiagrams(content) { // Updated for captions and per-chapter
     const caption = match[2] ? match[2].trim() : 'Illustration of the concept';
     const code = repairMermaidSyntax(rawCode);
 
-    // Determine current chapter
     let currentChapter = 0;
     for (let i = chapterPositions.length - 1; i >= 0; i--) {
       if (chapterPositions[i].pos < match.index) {
@@ -133,7 +129,6 @@ async function formatDiagrams(content) { // Updated for captions and per-chapter
       }
     }
     if (currentChapter === 0) {
-      // If no chapter found (e.g., in TOC or conclusion), use the last chapter or a default
       currentChapter = chapterPositions.length > 0 ? chapterPositions[chapterPositions.length - 1].num : 1;
     }
 
@@ -167,7 +162,6 @@ async function formatDiagrams(content) { // Updated for captions and per-chapter
 
     } catch (error) {
       logger.error(`❌ Failed to render diagram: ${error.message}`);
-      // Silent failure: remove diagram and caption completely
       content = content.replace(fullMatch, '');
     }
   }
@@ -179,31 +173,25 @@ function formatMath(content) {
   const tables = [];
   const codeBlocks = [];
 
-  // Protect tables
   content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
     tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
 
-  // Protect fenced code
   content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // Protect inline code
   content = content.replace(/`([^`]+)`/g, (match) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
 
-  // 🔥 MATH FIX: Simplify math logic
-  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$'); // Convert \[ \] to $$ $$   
-  // Clean up common AI artifacts
-  content = content.replace(/\\wedge/g, '^'); 
+  content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
+  content = content.replace(/\\wedge/g, '^');
   content = content.replace(/\{\\\^\}/g, '^');
 
-  // Restore protected blocks
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
 
@@ -297,26 +285,24 @@ function parseTOC(tocContent) {
   const valid = chapters.filter(c => c.subtopics.length >= 3);
   logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
   
-  // 🔥 CHANGED: Changed from 5 to 10 to force limit
-  return valid.slice(0, 10); 
+  return valid.slice(0, 10);
 }
 
 function generateFallbackTOC(bookTopic) {
   const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
   
-  // 🔥 CHANGED: Increased fallback to 10 chapters
- const base = [
-  "Introduction to Core Concepts",
-  "Essential Principles and Practices", 
-  "Understanding Key Systems",
-  "Practical Applications and Techniques",
-  "Advanced Topics and Future Trends",
-  "Case Studies and Real-World Examples",
-  "Implementation Strategies",
-  "Optimization and Best Practices",
-  "Troubleshooting and Common Issues",
-  "Future Directions and Innovations"
-];
+  const base = [
+    "Introduction to Core Concepts",
+    "Essential Principles and Practices", 
+    "Understanding Key Systems",
+    "Practical Applications and Techniques",
+    "Advanced Topics and Future Trends",
+    "Case Studies and Real-World Examples",
+    "Implementation Strategies",
+    "Optimization and Best Practices",
+    "Troubleshooting and Common Issues",
+    "Future Directions and Innovations"
+  ];
   
   const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
   const suffix = isTechName ? ` in ${cleanTopic}` : '';
@@ -354,10 +340,6 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
         reply = await result.response.text();
       } else if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
         reply = result.candidates[0].content.parts[0].text;
-      } else if (result.output && Array.isArray(result.output)) {
-        reply = result.output.map(o => (o?.content || o?.text || '')).join('\n');
-      } else if (result.text) {
-        reply = result.text;
       }
       
       reply = (reply || '').toString().trim();
@@ -390,36 +372,23 @@ async function askAI(prompt, userId, bookTopic, options = {}) {
 
 // ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
-  // 🔥 CHANGED: Requested EXACTLY 10 chapters in prompt
   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
 REQUIREMENTS (FOLLOW EXACTLY):
 - Output EXACTLY 10 chapters
 - Use the format: "Chapter X: Title" on its own line
 - Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
 - NO extra text, NO explanations, NO markdown
-- Make titles descriptive and unique
-- Example format:
-Chapter 1: Getting Started
-   - Core Concepts
-   - Practical Steps
-   - Common Mistakes
-[... continues to Chapter 10]`;
+- Make titles descriptive and unique`;
 
   let attempts = 0;
-  let lastRaw = '';
-
   while (attempts < 5) {
     const genOptions = { maxOutputTokens: 1000, temperature: 0.3, topP: 0.8 };
     try {
       const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
-      lastRaw = rawTOC;
-      
-      logger.debug(`Raw TOC (attempt ${attempts + 1}):\n${rawTOC.substring(0, 500)}...`);
       
       const cleaned = cleanUpAIText(rawTOC);
       const parsed = parseTOC(cleaned);
 
-      // 🔥 CHANGED: Validation check for 10 chapters
       if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
         logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
         return { raw: cleaned, parsed };
@@ -439,24 +408,15 @@ Chapter 1: Getting Started
 async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-  // 🔥 UPDATED: Optional diagrams with required captions + MATH FIX: Explicit Math Formatting Rules in Prompt
+  // 🔥 FIXED: Stricter prompt like 5-chapter version - removes "include Math if relevant"
   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
-
 CRITICAL FORMATTING RULES:
 - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
 - Do NOT repeat the title as a second heading
 - Use ### for ALL subsections
 - ALL tables MUST use strict GitHub Markdown table syntax
-- NO trailing asterisks (*) on any lines
 - NO HTML tags like <header> or <footer>
 - 600+ words total
-
-**MATH FORMATTING RULES (CRITICAL):**
-- Use LaTeX for ALL mathematical expressions.
-- Wrap **inline math** in single dollar signs, e.g., $E = mc^2$.
-- Wrap **block math** (centered equations) in double dollar signs, e.g., $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$ - **DO NOT** escape the dollar signs (write $, not \\$).
-- **DO NOT** escape LaTeX backslashes (write \\frac, not \\\\frac).
-- Use standard LaTeX notation (e.g., x^2 for power, \\int for integral).
 
 **DIAGRAMS (Optional):**
 - Create Mermaid diagrams ONLY if they help explain complex concepts
@@ -464,12 +424,11 @@ CRITICAL FORMATTING RULES:
 - Quote node labels with parentheses: A["User (Admin)"]
 - Immediately after each diagram block, add EXACTLY one line: *Figure caption: Brief description of the diagram*
 
-MANDATORY CONTENT STRUCTURE:
-1) Introduction: A brief overview of the chapter.
-2) KEY SECTIONS: You MUST create a specific subsection (### Heading) for EACH of the following subtopics:
- ${subtopicList}
-
-3) Practical Application/Exercise: A real-world example or exercise.
+MANDATORY STRUCTURE:
+1) Introduction: Overview.
+2) SECTIONS: Create a subsection (###) for EACH subtopic:
+${subtopicList}
+3) Practical Application: Real-world example.
 4) Further Reading: 2-3 references.
 
 Output ONLY the chapter content.`;
@@ -482,22 +441,15 @@ Output ONLY the chapter content.`;
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
   const titles = chapterInfos.map(c => c.title).join(', ');
-  const prompt = `Write a professional conclusion for a book about "${bookTopic}".
-Summarize these key topics: ${titles}
-Include 3-5 authoritative resources with descriptions.
-
-Use natural language and focus on summarizing the core concepts.
-300-350 words, formal tone.
-
-Output ONLY the conclusion content.`;
-
+  const prompt = `Write a professional conclusion for a book about "${bookTopic}". Summarize: ${titles}. 350 words.`;
+  
   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
     minLength: 1200,
     genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
   }));
 }
 
-// ==================== PDF GENERATION (MODIFIED FOR FIGURES WITH CAPTIONS) ====================
+// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle, figures = []) {
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
@@ -511,8 +463,7 @@ function buildEnhancedHTML(content, bookTitle, figures = []) {
       <figcaption style="margin-top: 0.5em; font-style: italic; color: #6b7280; font-size: 0.9em;">Figure ${fig.figNum}: ${fig.caption}</figcaption>
     </figure>`;
   });
-  
-  // Extract clean title for cover
+
   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
   displayTitle = displayTitle
@@ -520,30 +471,26 @@ function buildEnhancedHTML(content, bookTitle, figures = []) {
     .replace(/^\d+\.\s*/, '')
     .trim();
 
-  // 🔥 MATH FIX: Updated MathJax config script + CLEAN URLS
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${displayTitle} - Bookgen.ai</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com ">
-  <link rel="preconnect" href="https://fonts.gstatic.com " crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300 ;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
-      svg: { fontCache: 'none', scale: 0.95 }
+      svg: { fontCache: 'global' }
     };
   </script>
-  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js "></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-scala.min.js "></script>
-  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css " rel="stylesheet">
+  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
     @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
@@ -561,13 +508,13 @@ function buildEnhancedHTML(content, bookTitle, figures = []) {
     h3 { font-size: 18px; color: #6b7280; }
     .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
     code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
-    pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); }
+    pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
     blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
     blockquote::before { content: "“"; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
     .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
     .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
-    table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
+    table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
     tr:nth-child(even) { background: #f9fafb; }
@@ -582,7 +529,7 @@ function buildEnhancedHTML(content, bookTitle, figures = []) {
       <h2 class="cover-subtitle">A Guide book</h2>
       <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
     </div>
-    <div class="cover-meta">Generated by Bookgen.ai<br>${new Date().toLocaleDateString()}</div>
+    <div class="cover-meta">Generated by bookgen.ai<br>${new Date().toLocaleDateString()}</div>
   </div>
   <div class="chapter-content">${marked.parse(finalContent)}</div>
   <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
@@ -593,7 +540,6 @@ function buildEnhancedHTML(content, bookTitle, figures = []) {
 
 async function generatePDF(content, outputPath, bookTitle) {
   try {
-    // 🔥 UPDATED: Process diagrams with captions
     logger.info('🎨 Rendering diagrams (if any)...');
     const { content: processedContent, figures } = await formatDiagrams(content);
     
@@ -627,7 +573,7 @@ async function generatePDF(content, outputPath, bookTitle) {
       contentType: 'text/html'
     });
 
-    const response = await fetch('https://api.nutrient.io/build ', {
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -733,8 +679,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
 
 
 
