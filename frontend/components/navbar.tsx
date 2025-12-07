@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Navbar,
   NavbarBrand,
@@ -17,11 +18,10 @@ import {
   DropdownItem,
   Avatar,
 } from "@heroui/react";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { auth } from "../auth/firebaseSDK"; // Adjust the import path if needed
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../auth/firebaseSDK";
 
-// Dummy login state (replace with your real logic)
-export const AcmeLogo = () => (
+export const Logo = () => (
   <svg fill="none" height="36" viewBox="0 0 32 32" width="36">
     <path
       clipRule="evenodd"
@@ -36,79 +36,67 @@ export default function CustomNavbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
-
-  const menuItems = [
-    "Profile",
-    "Dashboard",
-    "Activity",
-    "Deployments",
-    "My Settings",
-    "Team Settings",
-    "Help & Feedback",
-    "Log Out",
-  ]; // this work please
+  const router = useRouter();
 
   useEffect(() => {
-    // Listen for changes in auth state
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setIsLoggedIn(true);
-        setUser(user); // Store user info
+        setUser(user);
       } else {
         setIsLoggedIn(false);
-        setUser(null); // Clear user info when logged out
+        setUser(null);
       }
     });
 
-    // Cleanup on component unmount
     return () => unsubscribe();
   }, []);
 
-  const handleLogout = () => {
-    // Log out the user using Firebase
-    const auth = getAuth();
-    auth.signOut();
+  const handleLogout = async () => {
+    await auth.signOut();
+    router.push("/");
   };
 
   return (
-    <Navbar onMenuOpenChange={setIsMenuOpen}>
+    <Navbar onMenuOpenChange={setIsMenuOpen} maxWidth="xl">
       <NavbarContent>
         <NavbarMenuToggle
           aria-label={isMenuOpen ? "Close menu" : "Open menu"}
           className="sm:hidden"
         />
         <NavbarBrand>
-          <AcmeLogo />
-          <p className="font-bold text-inherit">ACME</p>
+          <Link href="/" className="flex items-center gap-2">
+            <Logo />
+            <p className="font-bold text-inherit">Bookgen.ai</p>
+          </Link>
         </NavbarBrand>
       </NavbarContent>
 
       <NavbarContent className="hidden sm:flex gap-4" justify="center">
-        <NavbarItem>
-          <Link color="foreground" href="#">
-            Features
-          </Link>
-        </NavbarItem>
-        <NavbarItem isActive>
-          <Link aria-current="page" href="#">
-            Customers
-          </Link>
-        </NavbarItem>
-        <NavbarItem>
-          <Link color="foreground" href="#">
-            Integrations
-          </Link>
-        </NavbarItem>
+        {isLoggedIn && (
+          <>
+            <NavbarItem>
+              <Link color="foreground" href="/dash">
+                Dashboard
+              </Link>
+            </NavbarItem>
+            <NavbarItem>
+              <Link color="foreground" href="/documents">
+                My Documents
+              </Link>
+            </NavbarItem>
+          </>
+        )}
       </NavbarContent>
 
       <NavbarContent justify="end">
         {!isLoggedIn ? (
           <>
             <NavbarItem className="hidden lg:flex">
-              <Link href="#">Login</Link>
+              <Link href="/login">Login</Link>
             </NavbarItem>
             <NavbarItem>
-              <Button as={Link} color="primary" href="#" variant="flat">
+              <Button as={Link} color="primary" href="/login" variant="flat">
                 Sign Up
               </Button>
             </NavbarItem>
@@ -121,21 +109,23 @@ export default function CustomNavbar() {
                 as="button"
                 className="transition-transform"
                 color="secondary"
-                name={user?.displayName || "User"}
+                name={user?.displayName || user?.email?.charAt(0).toUpperCase() || "U"}
                 size="sm"
-                src={
-                  user?.photoURL ||
-                  "https://i.pravatar.cc/150?u=a042581f4e29026704d"
-                }
+                src={user?.photoURL || undefined}
               />
             </DropdownTrigger>
             <DropdownMenu aria-label="Profile Actions" variant="flat">
-              <DropdownItem key="profile" className="h-14 gap-2">
+              <DropdownItem key="profile" className="h-14 gap-2" textValue="Profile">
                 <p className="font-semibold">Signed in as</p>
-                <p className="font-semibold">{user?.email}</p>
+                <p className="font-semibold text-sm">{user?.email}</p>
               </DropdownItem>
-              <DropdownItem key="settings">My Settings</DropdownItem>
-              <DropdownItem key="logout" color="danger" onClick={handleLogout}>
+              <DropdownItem key="dashboard" href="/dash" textValue="Dashboard">
+                Dashboard
+              </DropdownItem>
+              <DropdownItem key="documents" href="/documents" textValue="My Documents">
+                My Documents
+              </DropdownItem>
+              <DropdownItem key="logout" color="danger" onClick={handleLogout} textValue="Logout">
                 Log Out
               </DropdownItem>
             </DropdownMenu>
@@ -144,24 +134,37 @@ export default function CustomNavbar() {
       </NavbarContent>
 
       <NavbarMenu>
-        {menuItems.map((item, index) => (
-          <NavbarMenuItem key={`${item}-${index}`}>
-            <Link
-              className="w-full"
-              color={
-                index === 2
-                  ? "primary"
-                  : index === menuItems.length - 1
-                    ? "danger"
-                    : "foreground"
-              }
-              href="#"
-              size="lg"
-            >
-              {item}
+        {isLoggedIn ? (
+          <>
+            <NavbarMenuItem>
+              <Link className="w-full" color="foreground" href="/dash" size="lg">
+                Dashboard
+              </Link>
+            </NavbarMenuItem>
+            <NavbarMenuItem>
+              <Link className="w-full" color="foreground" href="/documents" size="lg">
+                My Documents
+              </Link>
+            </NavbarMenuItem>
+            <NavbarMenuItem>
+              <Link
+                className="w-full"
+                color="danger"
+                href="#"
+                size="lg"
+                onClick={handleLogout}
+              >
+                Log Out
+              </Link>
+            </NavbarMenuItem>
+          </>
+        ) : (
+          <NavbarMenuItem>
+            <Link className="w-full" color="primary" href="/login" size="lg">
+              Login / Sign Up
             </Link>
           </NavbarMenuItem>
-        ))}
+        )}
       </NavbarMenu>
     </Navbar>
   );
