@@ -218,17 +218,28 @@ function parseTOC(tocContent) {
 
 // ==================== AI INTERACTION ====================
 async function askAI(prompt, userId, options = {}) {
-  await globalRateLimiter.wait();
-  const genCfg = options.genOptions || { maxOutputTokens: 8000, temperature: 0.4 }; // Higher tokens for long chapters + metadata
-  const model = ensureGenAI().getGenerativeModel({ model: MODEL_NAME, generationConfig: genCfg });
+  const maxRetries = 5;
+  let delay = 2000; // Start with 2 seconds
 
-  try {
-    const result = await model.generateContent(prompt);
-    return result.response.text();
-  } catch (e) {
-    logger.error(`AI Error: ${e.message}`);
-    throw e;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await globalRateLimiter.wait();
+      const genCfg = options.genOptions || { maxOutputTokens: 8000, temperature: 0.4 };
+      const model = ensureGenAI().getGenerativeModel({ model: MODEL_NAME, generationConfig: genCfg });
+      
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (e) {
+      if (e.message.includes('503') || e.message.includes('overloaded')) {
+        logger.warn(`AI busy (503). Retry ${i + 1}/${maxRetries} in ${delay}ms...`);
+        await new Promise(res => setTimeout(res, delay));
+        delay *= 2; // Double the wait time for next try
+        continue;
+      }
+      throw e; // If it's a different error (like 401 API key), stop immediately
+    }
   }
+  throw new Error("AI remained overloaded after 5 retries.");
 }
 
 // ==================== CONTENT GENERATION ====================
@@ -247,6 +258,8 @@ async function generateTOC(bookTopic, userId) {
 
 // [FEATURE 1, 2, 3] Enhanced Generation
 async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, userId) {
+  const subtopicList = info.subtopics.map(s => `- ${s}`).join('\n');
+
   const prompt = `
   Role: Expert Technical Author.
   Task: Write Chapter ${chNum}: "${info.title}" for a book about "${bookTopic}".
@@ -258,61 +271,71 @@ async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, user
   [CONTENT REQUIREMENTS]
   1. **Structure**: 
      - Start with "## ${info.title}"
-     - Use "### Subsections"
-     - [FEATURE 4] Use Callouts for tips/warnings:
-       > [!PRO-TIP] text here
-       > [!WARNING] text here
-  2. **Subtopics to cover**: ${info.subtopics.join(', ')}.
-  3. **Tone**: Professional, authoritative, yet accessible (O'Reilly style).
-  4. **Length**: 1500+ words.
+     - Use "### Subsections" for each subtopic:
+     ${subtopicList}
+     - Use [!PRO-TIP], [!WARNING], or [!NOTE] callouts where relevant.
+  2. **Tone**: Professional, authoritative, and instructional.
+  3. **Length**: 1500+ words.
 
-  [FEATURE 2 & 3: METADATA & DATA EXTRACTION]
-  At the VERY END of your response, you MUST append a machine-readable block exactly like this:
+  [METADATA EXTRACTION]
+  At the VERY END of your response, you MUST append this separator "---METADATA---" followed by a JSON block:
 
   ---METADATA---
   {
-    "summary": "One sentence summary of this chapter for the context bridge.",
+    "summary": "One sentence summary for the next chapter's context bridge.",
     "glossary": [
-      {"term": "Term 1", "def": "Definition 1"},
-      {"term": "Term 2", "def": "Definition 2"}
+      {"term": "Keyword", "def": "Definition"}
     ],
     "quiz": [
       {
-        "q": "Question text here?",
-        "options": ["A) Opt1", "B) Opt2", "C) Opt3", "D) Opt4"],
+        "q": "Question?",
+        "options": ["A) ..", "B) ..", "C) ..", "D) .."],
         "correct": "A",
-        "explanation": "Why A is correct."
+        "explanation": "Why..."
       }
     ]
   }
   ---METADATA---
   
-  Make sure the JSON is valid. The content before the separator is the Book content.
-  The content after is for the system.
-  In the visible book content, add a "### Check Your Knowledge" section, but ONLY list the questions (no answers).
-  `;
+  Output the chapter first, then the metadata block.`;
 
-  const rawResponse = await askAI(prompt, userId);
+  // Using the improved askAI with retry logic
+  const rawResponse = await askAI(prompt, userId, { 
+    genOptions: { maxOutputTokens: 8000, temperature: 0.5 } 
+  });
   
-  // Parsing Split
+  // 1. Split the content from the metadata
   const splitParts = rawResponse.split('---METADATA---');
-  let content = splitParts[0].trim();
+  let chapterBody = splitParts[0].trim();
   let metadata = { summary: "", glossary: [], quiz: [] };
 
-  if (splitParts[1]) {
+  // 2. Bulletproof JSON Parsing
+  if (splitParts.length > 1) {
     try {
-      // clean potential json formatting markdown
-      const jsonStr = splitParts[1].replace(/```json/g, '').replace(/```/g, '').trim();
-      metadata = JSON.parse(jsonStr);
+      let jsonPart = splitParts[1].trim();
+      
+      // Find the actual JSON bounds (ignores any text the AI added around it)
+      const startIdx = jsonPart.indexOf('{');
+      const endIdx = jsonPart.lastIndexOf('}');
+      
+      if (startIdx !== -1 && endIdx !== -1) {
+        const cleanedJson = jsonPart.substring(startIdx, endIdx + 1);
+        metadata = JSON.parse(cleanedJson);
+        logger.info(`✅ Successfully parsed metadata for Ch ${chNum}`);
+      } else {
+        throw new Error("No valid JSON braces found in metadata block");
+      }
     } catch (e) {
-      logger.error(`Failed to parse metadata for Ch ${chNum}: ${e.message}`);
+      logger.error(`⚠️ Metadata Parse Fail Ch ${chNum}: ${e.message}`);
+      // Fallback summary so the next chapter knows what happened
+      metadata.summary = `In Chapter ${chNum}, we covered ${info.title}, focusing on its core principles and subtopics.`;
     }
   } else {
-      // Fallback: simple summary if parsing fails
-      metadata.summary = `Chapter ${chNum} covered ${info.title}.`;
+    logger.warn(`⚠️ No metadata block found for Ch ${chNum}`);
+    metadata.summary = `Chapter ${chNum} explored the fundamentals of ${info.title}.`;
   }
 
-  return { content, metadata };
+  return { content: chapterBody, metadata };
 }
 
 // ==================== HTML & PDF BUILDER ====================
