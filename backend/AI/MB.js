@@ -38,7 +38,7 @@ const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const STATE_DIR = path.join(__dirname, 'states'); // [FEATURE 5] Checkpoint Dir
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.0-flash'; // Suggest upgrading to 2.0 or 1.5 Pro for better instruction following
+const MODEL_NAME = 'gemini-2.5-flash-lite'; // Suggest upgrading to 2.0 or 1.5 Pro for better instruction following
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
 let genAI = null;
