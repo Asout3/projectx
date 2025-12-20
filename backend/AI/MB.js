@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import fs from 'fs';
@@ -36,18 +36,18 @@ class RateLimiter {
 const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
-const STATE_DIR = path.join(__dirname, 'states'); // [FEATURE 5] Checkpoint Dir
+const STATE_DIR = path.join(__dirname, 'states');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-2.5-flash-lite'; // Suggest upgrading to 2.0 or 1.5 Pro for better instruction following
+const MODEL_NAME = 'gpt-oss-120b';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
-let genAI = null;
-function ensureGenAI() {
-  if (genAI) return genAI;
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error('GEMINI_API_KEY not set');
-  genAI = new GoogleGenerativeAI(key);
-  return genAI;
+let cerebras = null;
+function ensureCerebras() {
+  if (cerebras) return cerebras;
+  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
+  if (!key) throw new Error('CEREBRAS_API_KEY not set');
+  cerebras = new Cerebras({ apiKey: key });
+  return cerebras;
 }
 
 const userHistories = new Map();
@@ -117,20 +117,15 @@ function generateMeshGradient() {
 // ==================== TEXT PROCESSING & PARSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
-  // Basic cleanup
   let clean = text.replace(/^(?:Hi|Hello|Sure|Here).*?(\n\n|$)/gis, '').trim();
-  // Strip Markdown code blocks if the AI wrapped the whole response in them
   clean = clean.replace(/^```markdown\s*/i, '').replace(/\s*```$/, '');
   return clean;
 }
 
-// [FEATURE 4] Callout Processing via Marked
-// We intercept blockquotes that start with [!TIP] etc.
 const originalBlockquote = marked.Renderer.prototype.blockquote;
 marked.use({
   renderer: {
     blockquote(quote) {
-      // Marked passes the content wrapped in <p>, we need to strip it to check text
       const rawText = quote.replace(/<p>|<\/p>|\n/g, '').trim();
       
       if (rawText.includes('[!PRO-TIP]') || rawText.includes('[!TIP]')) {
@@ -163,11 +158,8 @@ function repairMermaidSyntax(code) {
 async function formatDiagrams(content) {
   const figures = [];
   const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
-  let match;
   let i = 0;
   
-  // Using string replacement to handle asynchronous diagram rendering
-  // We first extract all diagrams
   const matches = [...content.matchAll(diagramRegex)];
   
   for (let match of matches) {
@@ -177,7 +169,7 @@ async function formatDiagrams(content) {
     const figNum = `Fig-${i++}`;
 
     try {
-      const res = await fetch('https://kroki.io/mermaid/svg', {
+      const res = await fetch('https://kroki.io/mermaid/svg ', {
         method: 'POST',
         body: code,
         headers: { 'Content-Type': 'text/plain' }
@@ -188,7 +180,7 @@ async function formatDiagrams(content) {
         figures.push({ base64, caption, id: i });
         content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
       } else {
-        content = content.replace(fullMatch, ''); // Remove broken diagram
+        content = content.replace(fullMatch, '');
       }
     } catch (e) {
       content = content.replace(fullMatch, '');
@@ -199,7 +191,6 @@ async function formatDiagrams(content) {
 
 // ==================== TOC PARSER ====================
 function parseTOC(tocContent) {
-  // (Logic similar to original, simplified for brevity)
   const lines = tocContent.split('\n').filter(l => l.trim().length > 0);
   const chapters = [];
   let current = null;
@@ -213,30 +204,40 @@ function parseTOC(tocContent) {
     }
   });
   if (current) chapters.push(current);
-  return chapters.slice(0, 10); // Enforce 10 limit
+  return chapters.slice(0, 10);
 }
 
 // ==================== AI INTERACTION ====================
 async function askAI(prompt, userId, options = {}) {
   const maxRetries = 5;
-  let delay = 2000; // Start with 2 seconds
+  let delay = 2000;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
       await globalRateLimiter.wait();
-      const genCfg = options.genOptions || { maxOutputTokens: 8000, temperature: 0.4 };
-      const model = ensureGenAI().getGenerativeModel({ model: MODEL_NAME, generationConfig: genCfg });
       
-      const result = await model.generateContent(prompt);
-      return result.response.text();
+      const result = await ensureCerebras().chat.completions.create({
+        model: MODEL_NAME,
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: options.genOptions?.maxOutputTokens || 8000,
+        temperature: options.genOptions?.temperature || 0.4,
+        stream: false
+      });
+      
+      return result.choices[0].message.content;
     } catch (e) {
       if (e.message.includes('503') || e.message.includes('overloaded')) {
         logger.warn(`AI busy (503). Retry ${i + 1}/${maxRetries} in ${delay}ms...`);
         await new Promise(res => setTimeout(res, delay));
-        delay *= 2; // Double the wait time for next try
+        delay *= 2;
         continue;
       }
-      throw e; // If it's a different error (like 401 API key), stop immediately
+      throw e;
     }
   }
   throw new Error("AI remained overloaded after 5 retries.");
@@ -256,7 +257,6 @@ async function generateTOC(bookTopic, userId) {
   return { raw: txt, parsed: parseTOC(txt) };
 }
 
-// [FEATURE 1, 2, 3] Enhanced Generation
 async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, userId) {
   const subtopicList = info.subtopics.map(s => `- ${s}`).join('\n');
 
@@ -299,22 +299,17 @@ async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, user
   
   Output the chapter first, then the metadata block.`;
 
-  // Using the improved askAI with retry logic
   const rawResponse = await askAI(prompt, userId, { 
     genOptions: { maxOutputTokens: 8000, temperature: 0.5 } 
   });
   
-  // 1. Split the content from the metadata
   const splitParts = rawResponse.split('---METADATA---');
   let chapterBody = splitParts[0].trim();
   let metadata = { summary: "", glossary: [], quiz: [] };
 
-  // 2. Bulletproof JSON Parsing
   if (splitParts.length > 1) {
     try {
       let jsonPart = splitParts[1].trim();
-      
-      // Find the actual JSON bounds (ignores any text the AI added around it)
       const startIdx = jsonPart.indexOf('{');
       const endIdx = jsonPart.lastIndexOf('}');
       
@@ -327,7 +322,6 @@ async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, user
       }
     } catch (e) {
       logger.error(`⚠️ Metadata Parse Fail Ch ${chNum}: ${e.message}`);
-      // Fallback summary so the next chapter knows what happened
       metadata.summary = `In Chapter ${chNum}, we covered ${info.title}, focusing on its core principles and subtopics.`;
     }
   } else {
@@ -343,7 +337,6 @@ async function generateChapterEnhanced(bookTopic, chNum, info, prevContext, user
 function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quizzes = []) {
   const meshBg = generateMeshGradient();
 
-  // [FEATURE 3] Build Glossary HTML
   const glossaryHTML = glossary.length > 0 ? `
     <div class="chapter-break"></div>
     <h1>Technical Glossary</h1>
@@ -355,7 +348,6 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quiz
     </dl>
   ` : '';
 
-  // [FEATURE 2] Build Answer Key HTML
   const answerKeyHTML = quizzes.length > 0 ? `
     <div class="chapter-break"></div>
     <h1>Answer Key</h1>
@@ -371,23 +363,19 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quiz
     `).join('')}
   ` : '';
 
-  // Inject figures
   content = content.replace(/__FIGURE__(\d+)__/g, (_, i) => {
     const fig = figures[parseInt(i)];
     return fig ? `<figure><img src="${fig.base64}"><figcaption>Figure: ${fig.caption}</figcaption></figure>` : '';
   });
 
-  // [FEATURE 4] CSS Styling for Callouts
   return `<!DOCTYPE html>
   <html>
   <head>
     <style>
-      /* Base & Typography */
-      @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,700;1,300&family=Inter:wght@400;600;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital ,wght@0,300;0,700;1,300&family=Inter:wght@400;600;800&display=swap');
       body { font-family: 'Merriweather', serif; line-height: 1.6; color: #333; }
       h1, h2, h3 { font-family: 'Inter', sans-serif; color: #111; margin-top: 2em; }
       
-      /* [FEATURE 6] Dynamic Cover */
       .cover {
         height: 100vh; display: flex; flex-direction: column; 
         justify-content: center; align-items: center; text-align: center;
@@ -396,7 +384,6 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quiz
       }
       .cover h1 { font-size: 3.5rem; text-shadow: 0 2px 10px rgba(0,0,0,0.3); color: white; margin: 0; border: none; }
       
-      /* [FEATURE 4] Callouts */
       .callout { padding: 1.2em; margin: 1.5em 0; border-left: 5px solid; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9em; page-break-inside: avoid; }
       .callout strong { display: block; margin-bottom: 0.5em; text-transform: uppercase; letter-spacing: 0.05em; }
       
@@ -404,12 +391,10 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quiz
       .callout-warning { background-color: #fff7ed; border-color: #ea580c; color: #9a3412; }
       .callout-note { background-color: #eff6ff; border-color: #2563eb; color: #1e40af; }
 
-      /* Glossary & Answers */
       .glossary-list dt { font-weight: bold; font-family: 'Inter', sans-serif; margin-top: 1em; color: #2563eb; }
       .glossary-list dd { margin-left: 0; margin-bottom: 0.5em; }
       .answer-item { margin-bottom: 0.8em; padding-bottom: 0.8em; border-bottom: 1px dashed #eee; }
       
-      /* Utils */
       .chapter-break { page-break-before: always; }
       figure img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
       figcaption { text-align: center; font-size: 0.85em; color: #666; margin-top: 0.5em; font-style: italic; }
@@ -437,7 +422,6 @@ export async function generateBookMedd(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   
-  // [FEATURE 5] Initialize or Load State
   let state = CheckpointManager.load(safeUserId) || {
     bookTopic,
     chapterInfos: [],
@@ -445,12 +429,11 @@ export async function generateBookMedd(rawTopic, userId) {
     generatedFiles: [],
     glossaryAccumulator: [],
     quizAccumulator: [],
-    lastContext: null, // [FEATURE 1]
+    lastContext: null,
     tocGenerated: false
   };
 
   try {
-    // 1. TOC Generation (Skip if done)
     if (!state.tocGenerated) {
       logger.info('Creating Table of Contents...');
       const { parsed } = await generateTOC(bookTopic, safeUserId);
@@ -459,7 +442,6 @@ export async function generateBookMedd(rawTopic, userId) {
       CheckpointManager.save(safeUserId, state);
     }
 
-    // 2. Chapter Loop (Skip completed)
     const chapters = state.chapterInfos;
     for (let i = state.completedChapters; i < chapters.length; i++) {
       const info = chapters[i];
@@ -467,20 +449,17 @@ export async function generateBookMedd(rawTopic, userId) {
       
       logger.info(`Generating Ch ${chNum}: ${info.title}`);
       
-      // [FEATURE 1, 2, 3] Call enhanced generator
       const { content, metadata } = await generateChapterEnhanced(
         bookTopic, chNum, info, state.lastContext, safeUserId
       );
 
       const fileName = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chNum}.txt`);
-      // Add Chapter header manually here so we can separate content
       const fullText = `# Chapter ${chNum}: ${info.title}\n\n${content}`;
       fs.writeFileSync(fileName, fullText);
 
-      // Update State
       state.generatedFiles.push(fileName);
       state.completedChapters++;
-      state.lastContext = metadata.summary; // Bridge context
+      state.lastContext = metadata.summary;
       if (metadata.glossary) state.glossaryAccumulator.push(...metadata.glossary);
       if (metadata.quiz && metadata.quiz.length) {
         state.quizAccumulator.push({ chapterTitle: info.title, questions: metadata.quiz });
@@ -489,29 +468,25 @@ export async function generateBookMedd(rawTopic, userId) {
       CheckpointManager.save(safeUserId, state);
     }
 
-    // 3. Compilation & PDF
     logger.info('Compiling final PDF...');
     let combinedContent = '';
     
-    // Add TOC to content
     combinedContent += `# Table of Contents\n\n${state.chapterInfos.map((c,i)=>`${i+1}. ${c.title}`).join('\n')}\n\n<div class="chapter-break"></div>\n`;
 
     for (const file of state.generatedFiles) {
       combinedContent += fs.readFileSync(file, 'utf8') + '\n\n<div class="chapter-break"></div>\n';
     }
 
-    // [FEATURE 3 & 6] Diagrams and PDF Generation
     const { content: processedContent, figures } = await formatDiagrams(combinedContent);
     
     const html = buildEnhancedHTML(
       processedContent, 
       bookTopic, 
       figures, 
-      state.glossaryAccumulator, // Pass collected glossary
-      state.quizAccumulator      // Pass collected quizzes
+      state.glossaryAccumulator,
+      state.quizAccumulator
     );
 
-    // Send to Nutrient
     const form = new FormData();
     const instructions = {
       parts: [{ html: "index.html" }],
@@ -527,7 +502,7 @@ export async function generateBookMedd(rawTopic, userId) {
     form.append('instructions', JSON.stringify(instructions));
     form.append('index.html', Buffer.from(html), { filename: 'index.html', contentType: 'text/html' });
 
-    const pdfRes = await fetch('https://api.nutrient.io/build', {
+    const pdfRes = await fetch('https://api.nutrient.io/build ', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
@@ -538,7 +513,6 @@ export async function generateBookMedd(rawTopic, userId) {
     const pdfPath = path.join(OUTPUT_DIR, `Book_${safeUserId}.pdf`);
     fs.writeFileSync(pdfPath, await pdfRes.buffer());
 
-    // Cleanup on success
     state.generatedFiles.forEach(f => { if(fs.existsSync(f)) fs.unlinkSync(f); });
     CheckpointManager.clear(safeUserId);
     
@@ -547,7 +521,6 @@ export async function generateBookMedd(rawTopic, userId) {
 
   } catch (e) {
     logger.error(`❌ Process Failed: ${e.message}`);
-    // State is preserved; user can retry and resume
     throw e;
   }
 }
