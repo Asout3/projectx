@@ -830,21 +830,23 @@ const originalBlockquote = marked.Renderer.prototype.blockquote;
 marked.use({
   renderer: {
     blockquote(quote) {
-      const rawText = quote.replace(/<p>|<\/p>|\n/g, '').trim();
+      // Handle both string (old) and object (new) formats
+      const textSource = typeof quote === 'string' ? quote : (quote.text || '');
+      const rawText = textSource.replace(/<p>|<\/p>|\n/g, '').trim();
       
       if (rawText.includes('[!PRO-TIP]') || rawText.includes('[!TIP]')) {
-        const content = quote.replace(/\[!(PRO-)?TIP\]/i, '');
+        const content = textSource.replace(/\[!(PRO-)?TIP\]/i, '');
         return `<div class="callout callout-tip"><strong>💡 Pro Tip</strong>${content}</div>`;
       }
       if (rawText.includes('[!WARNING]') || rawText.includes('[!CAUTION]')) {
-        const content = quote.replace(/\[!(WARNING|CAUTION)\]/i, '');
+        const content = textSource.replace(/\[!(WARNING|CAUTION)\]/i, '');
         return `<div class="callout callout-warning"><strong>⚠️ Caution</strong>${content}</div>`;
       }
       if (rawText.includes('[!NOTE]')) {
-        const content = quote.replace(/\[!NOTE\]/i, '');
+        const content = textSource.replace(/\[!NOTE\]/i, '');
         return `<div class="callout callout-note"><strong>ℹ️ Note</strong>${content}</div>`;
       }
-      return `<blockquote class="standard-quote">${quote}</blockquote>`;
+      return `<blockquote class="standard-quote">${textSource}</blockquote>`;
     }
   }
 });
