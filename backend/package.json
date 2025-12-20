@@ -34,6 +34,7 @@
     "puppeteer-core": "^21.3.8",
     "svg2pdf.js": "^2.2.1",
     "together-ai": "^0.15.2",
+    "@cerebras/cerebras_cloud_sdk": "latest"
     "winston": "^3.17.0"
   }
 }
