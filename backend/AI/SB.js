@@ -42,7 +42,7 @@ const globalRateLimiter = new RateLimiter(15);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gemini-1.5-flash';
+const MODEL_NAME = 'gemini-2.0-flash-lite';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 let genAI = null;
 function ensureGenAI() {
