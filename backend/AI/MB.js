@@ -1145,26 +1145,30 @@ async function generateConclusion(bookTopic, chapterInfos, userId) {
 }
 
 // ==================== PDF GENERATION ====================
-function buildEnhancedHTML(content, bookTitle, figures = [], glossary = [], quizzes = []) {
+function buildEnhancedHTML(content, bookTitle, figures = [], glossary = null, quizzes = null) {
+  // Add null safety - fix for the crash
+  const safeGlossary = glossary || [];
+  const safeQuizzes = quizzes || [];
+  
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   const meshBg = generateMeshGradient();
 
-  const glossaryHTML = glossary.length > 0 ? `
+  const glossaryHTML = safeGlossary.length > 0 ? `
     <div class="chapter-break"></div>
     <h1>Technical Glossary</h1>
     <dl class="glossary-list">
-      ${glossary.sort((a,b) => a.term.localeCompare(b.term)).map(item => `
+      ${safeGlossary.sort((a,b) => a.term.localeCompare(b.term)).map(item => `
         <dt>${item.term}</dt>
         <dd>${item.def}</dd>
       `).join('')}
     </dl>
   ` : '';
 
-  const answerKeyHTML = quizzes.length > 0 ? `
+  const answerKeyHTML = safeQuizzes.length > 0 ? `
     <div class="chapter-break"></div>
     <h1>Answer Key</h1>
-    ${quizzes.map((ch, idx) => `
+    ${safeQuizzes.map((ch, idx) => `
       <h3>Chapter ${idx + 1}: ${ch.chapterTitle}</h3>
       <div class="answer-block">
         ${ch.questions.map((q, qIdx) => `
