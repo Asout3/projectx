@@ -102,7 +102,7 @@ class CheckpointManager {
 let cerebrasClient = null;
 function getAIClient() {
   if (cerebrasClient) return cerebrasClient;
-  const key = process.env.CEREBRAS_API_KEY;
+  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
   if (!key) throw new Error('CEREBRAS_API_KEY not set in .env');
   cerebrasClient = new Cerebras({ apiKey: key });
   return cerebrasClient;
