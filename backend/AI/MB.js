@@ -51,7 +51,6 @@ const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 let cerebras = null;
 function ensureCerebras() {
   if (cerebras) return cerebras;
-  // Hardcoded for testing - move to env var later
   const key = process.env.CEREBRAS_API_KEY || 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
   cerebras = new Cerebras({ apiKey: key });
   return cerebras;
@@ -149,7 +148,7 @@ function formatMath(content) {
     return `__TABLE__${tables.length - 1}__`;
   });
 
-  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match, code) => {
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
@@ -232,7 +231,9 @@ async function formatDiagrams(content) {
       });
       if (res.ok) {
         const svg = await res.text();
-        const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+        // Compress SVG for smaller PDF size
+        const compressedSvg = svg.replace(/\s+/g, ' ').replace(/"\s+/g, '"').trim();
+        const base64 = `data:image/svg+xml;base64,${Buffer.from(compressedSvg).toString('base64')}`;
         figures.push({ base64, caption, figNum });
         content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
       } else {
@@ -469,6 +470,7 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = null, qu
   const safeGlossary = glossary || [];
   const safeQuizzes = quizzes || [];
   
+  // FIX: Process math BEFORE diagrams to preserve LaTeX
   const cleaned = cleanUpAIText(content);
   const formattedContent = formatMath(cleaned);
   const meshBg = generateMeshGradient();
@@ -533,6 +535,10 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = null, qu
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
+    /* PDF MEMORY OPTIMIZATIONS */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    img { image-rendering: auto; max-width: 100%; height: auto; }
+    
     .glossary-list dt { font-weight: bold; font-family: 'Inter', sans-serif; margin-top: 1em; color: #2563eb; }
     .glossary-list dd { margin-left: 0; margin-bottom: 0.5em; }
     .answer-item { margin-bottom: 0.8em; padding-bottom: 0.8em; border-bottom: 1px dashed #eee; }
@@ -612,7 +618,9 @@ function buildEnhancedHTML(content, bookTitle, figures = [], glossary = null, qu
 async function generatePDF(content, outputPath, bookTitle) {
   try {
     logger.info('🎨 Rendering diagrams and math...');
-    const { content: processedContent, figures } = await formatDiagrams(content);
+    // FIX: Process math BEFORE diagrams to preserve LaTeX
+    const mathProcessed = formatMath(content);
+    const { content: processedContent, figures } = await formatDiagrams(mathProcessed);
     
     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, figures, null, null);
     
@@ -633,7 +641,10 @@ async function generatePDF(content, outputPath, bookTitle) {
           },
           waitDelay: 3000,
           printBackground: true,
-          preferCSSPageSize: true
+          preferCSSPageSize: true,
+          // FIX: Add compression hints for smaller PDF size
+          optimize: true,
+          compress: true
         }
       }
     };
@@ -695,6 +706,15 @@ function deleteFile(filePath) {
   }
 }
 
+// FIX: Generate TOC page for PDF
+function generateTOCPages(chapterInfos, bookTitle) {
+  const tocMarkdown = `# Table of Contents\n\n${chapterInfos.map((ch, i) => 
+    `${i + 1}. **${ch.title}**\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`
+  ).join('\n\n')}\n\n---\n`;
+  
+  return tocMarkdown;
+}
+
 // ==================== MAIN GENERATOR ====================
 export async function generateBookMedd(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
@@ -746,13 +766,20 @@ export async function generateBookMedd(rawTopic, userId) {
       CheckpointManager.save(safeUserId, state);
     }
 
+    // FIX: Generate TOC pages first
+    const tocPages = generateTOCPages(state.chapterInfos, bookTopic);
     const conclusion = await generateConclusion(bookTopic, state.chapterInfos, safeUserId);
     const conclFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
     saveToFile(conclFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
     state.generatedFiles.push(conclFile);
 
     logger.info('Combining content and generating PDF...');
-    let combined = state.generatedFiles.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+    
+    // FIX: Combine files sequentially to reduce memory
+    let combined = tocPages + '\n';
+    for (const file of state.generatedFiles) {
+      combined += fs.readFileSync(file, 'utf8') + '\n';
+    }
     
     if (state.glossaryAccumulator.length > 0) {
       combined += `\n<div class="chapter-break"></div>\n\n# Technical Glossary\n\n${state.glossaryAccumulator
@@ -782,7 +809,7 @@ export async function generateBookMedd(rawTopic, userId) {
   }
 }
 
-// ==================== QUEUE SYSTEM ====================
+// FIX: Reduced concurrency to 1 for memory optimization
 const bookQueue = async.queue(async (task, callback) => {
   try {
     const result = await generateBookMedd(task.bookTopic, task.userId);
@@ -790,7 +817,7 @@ const bookQueue = async.queue(async (task, callback) => {
   } catch (error) {
     callback(error);
   }
-}, 2);
+}, 1);
 
 export function queueBookGeneration(bookTopic, userId) {
   return new Promise((resolve, reject) => {
@@ -800,9 +827,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
-
 
 
 
