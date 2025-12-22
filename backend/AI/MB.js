@@ -1,4 +1,3 @@
-// AI/MB.js – Complete Expert Knowledge Generator
 import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -11,18 +10,12 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 import dotenv from 'dotenv';
 
+dotenv.config();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Environment Setup
-if (!process.env.RAILWAY_ENVIRONMENT) {
-  dotenv.config({ path: path.join(__dirname, '../backend/.env') });
-}
-
-const CEREBRAS_API_KEY = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
-const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
-
-// ==================== CORE INFRASTRUCTURE ====================
+// ==================== CORE SETUP ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.limit = requestsPerMinute;
@@ -32,29 +25,44 @@ class RateLimiter {
   async wait(userId) {
     const now = Date.now();
     if (!this.users.has(userId)) this.users.set(userId, []);
-    const recent = this.users.get(userId).filter(t => now - t < 60000);
+    
+    const userRequests = this.users.get(userId);
+    const recent = userRequests.filter(t => now - t < 60000);
+    this.users.set(userId, recent);
+
     while (recent.length >= this.limit) {
       const oldest = recent[0];
       const waitTime = 60000 - (now - oldest) + 1000;
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
+
     recent.push(now);
     this.users.set(userId, recent);
   }
 }
 
-const userRateLimiter = new RateLimiter(25);
+const userRateLimiter = new RateLimiter(30);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
-const STATE_DIR = path.join(__dirname, 'states');
+const CHAPTER_PREFIX = 'chapter';
+const MODEL_NAME = 'gpt-oss-120b';
+const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
-fs.mkdirSync(HISTORY_DIR, { recursive: true });
-fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-fs.mkdirSync(STATE_DIR, { recursive: true });
+let cerebras = null;
+function ensureCerebras() {
+  if (cerebras) return cerebras;
+  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
+  if (!key) {
+    throw new Error('CEREBRAS_API_KEY is not set in environment.');
+  }
+  cerebras = new Cerebras({ apiKey: key });
+  return cerebras;
+}
 
-// Reduced logging for production
+const userHistories = new Map();
+
 const logger = winston.createLogger({
-  level: 'warn', // Change to 'info' for debugging
+  level: 'info',
   format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
   transports: [
     new winston.transports.File({ filename: 'bookgen.log' }),
@@ -62,137 +70,152 @@ const logger = winston.createLogger({
   ]
 });
 
-// ==================== AI CLIENT ====================
-let cerebras = null;
-function ensureCerebras() {
-  if (cerebras) return cerebras;
-  if (!CEREBRAS_API_KEY) throw new Error('CEREBRAS_API_KEY not set');
-  cerebras = new Cerebras({ apiKey: CEREBRAS_API_KEY });
-  return cerebras;
-}
-
-// ==================== STATE MANAGEMENT ====================
-class CheckpointManager {
-  static getPath(userId) {
-    return path.join(STATE_DIR, `state-${userId}.json`);
-  }
-
-  static load(userId) {
-    const file = this.getPath(userId);
-    if (fs.existsSync(file)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-        logger.info(`🔄 Resuming at Chapter ${data.completedChapters + 1}`);
-        return data;
-      } catch (e) {
-        logger.warn('Corrupt state file, starting fresh');
-      }
-    }
-    return null;
-  }
-
-  static save(userId, data) {
-    fs.writeFileSync(this.getPath(userId), JSON.stringify(data, null, 2));
-  }
-
-  static clear(userId) {
-    const file = this.getPath(userId);
-    if (fs.existsSync(file)) fs.unlinkSync(file);
-  }
-}
+fs.mkdirSync(HISTORY_DIR, { recursive: true });
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // ==================== TEXT PROCESSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
-  return text
+  let clean = text
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
+    .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
+      if (match.includes('`') || match.includes('```')) return match;
+      return p1 + p2;
+    })
+    .replace(/\\([[\]{}()])/g, '$1')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\*\s*$/gm, '')
     .trim();
+
+  clean = clean.replace(/\\(\$)/g, '$');
+  return clean;
 }
 
 function formatMath(content) {
-  const tables = [], codeBlocks = [];
-  content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, tbl => {
+  const tables = [];
+  const codeBlocks = [];
+
+  content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
     tables.push(tbl);
     return `__TABLE__${tables.length - 1}__`;
   });
-  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, match => {
+
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match) => {
     codeBlocks.push(match);
     return `__CODE__${codeBlocks.length - 1}__`;
   });
+
+  content = content.replace(/`([^`]+)`/g, (match) => {
+    codeBlocks.push(match);
+    return `__CODE__${codeBlocks.length - 1}__`;
+  });
+
   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
+  content = content.replace(/\\wedge/g, '^');
+  content = content.replace(/\{\\\^\}/g, '^');
+
   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
+
   return content;
 }
 
-// Marked Configuration
-marked.use({
-  renderer: {
-    blockquote(quote) {
-      const text = typeof quote === 'string' ? quote : (quote.text || '');
-      const raw = text.replace(/<p>|<\/p>|\n/g, '').trim();
-      
-      if (raw.includes('[!PRO-TIP]')) {
-        return `<div class="callout callout-tip"><strong>💡 Expert Tip</strong>${text.replace('[!PRO-TIP]', '')}</div>`;
-      }
-      if (raw.includes('[!WARNING]')) {
-        return `<div class="callout callout-warning"><strong>⚠️ Critical Warning</strong>${text.replace('[!WARNING]', '')}</div>`;
-      }
-      if (raw.includes('[!NOTE]')) {
-        return `<div class="callout callout-note"><strong>📌 Key Concept</strong>${text.replace('[!NOTE]', '')}</div>`;
-      }
-      return `<blockquote>${text}</blockquote>`;
-    }
-  },
+// ==================== MARKED SETUP ====================
+marked.setOptions({
+  headerIds: false,
+  breaks: true,
   gfm: true,
-  breaks: true
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return code;
+  }
 });
 
-// ==================== DIAGRAMS ====================
+// ==================== DIAGRAM LOGIC ====================
 function repairMermaidSyntax(code) {
-  return code
+  let fixed = code
     .replace(/^mermaid\s*\n/i, '')
-    .replace(/\[([^\]]*?\(.*?\)[^\]]*?)\]/g, (m, c) => c.startsWith('"') ? m : `["${c.replace(/"/g, "'")}"]`)
+    .replace(/\[([^\]]*?\(.*?\)[^\]]*?)\]/g, (match, content) => {
+      if (content.startsWith('"') && content.endsWith('"')) return match;
+      return `["${content.replace(/"/g, "'")}"]`;
+    })
     .replace(/-->;\s*$/gm, '-->')
-    .replace(/-->\s*$/gm, '--> EndNode[End]')
-    .trim();
+    .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/-->\s*$/gm, '--> EndNode[End]');
+  return fixed.trim();
 }
 
 async function formatDiagrams(content) {
   const figures = [];
+  const diagramCounts = {};
   const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
-  
+
+  const chapterMatches = [...content.matchAll(/# Chapter (\d+):/g)];
+  const chapterPositions = chapterMatches.map(m => ({ num: parseInt(m[1]), pos: m.index }));
   const matches = [...content.matchAll(diagramRegex)];
-  logger.info(`🔍 Found ${matches.length} diagrams`);
+
+  if (matches.length > 0) {
+    logger.info(`🔍 Found ${matches.length} mermaid code blocks. Rendering...`);
+  }
 
   for (let match of matches) {
     const fullMatch = match[0];
-    const code = repairMermaidSyntax(match[1]);
-    const caption = match[2] || 'Illustration';
-    const figNum = figures.length + 1;
+    const rawCode = match[1].trim();
+    const caption = match[2] ? match[2].trim() : 'Illustration of the concept';
+    const code = repairMermaidSyntax(rawCode);
+
+    let currentChapter = 0;
+    for (let i = chapterPositions.length - 1; i >= 0; i--) {
+      if (chapterPositions[i].pos < match.index) {
+        currentChapter = chapterPositions[i].num;
+        break;
+      }
+    }
+    if (currentChapter === 0) {
+      currentChapter = chapterPositions.length > 0 ? chapterPositions[chapterPositions.length - 1].num : 1;
+    }
+
+    if (!diagramCounts[currentChapter]) diagramCounts[currentChapter] = 0;
+    diagramCounts[currentChapter]++;
+    const figNum = `${currentChapter}.${diagramCounts[currentChapter]}`;
 
     try {
-      const res = await fetch('https://kroki.io/mermaid/svg', {
+      const response = await fetch('https://kroki.io/mermaid/svg', {
         method: 'POST',
-        body: code,
-        headers: { 'Content-Type': 'text/plain' }
+        headers: {
+          'Content-Type': 'text/plain',
+          'Accept': 'image/svg+xml'
+        },
+        body: code
       });
-      if (res.ok) {
-        const base64 = `data:image/svg+xml;base64,${Buffer.from(await res.text()).toString('base64')}`;
-        figures.push({ base64, caption, figNum });
-        content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
-      } else {
-        content = content.replace(fullMatch, '');
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          logger.warn(`Invalid Mermaid Syntax Detected:\n${code}`);
+        }
+        throw new Error(`Kroki error: ${response.status}`);
       }
-    } catch {
+
+      const svg = await response.text();
+      const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+
+      figures.push({ base64, figNum, caption });
+      content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
+      logger.info(`✅ Diagram rendered successfully with caption: "${caption}"`);
+
+    } catch (error) {
+      logger.error(`❌ Failed to render diagram: ${error.message}`);
       content = content.replace(fullMatch, '');
     }
   }
+
   return { content, figures };
 }
 
@@ -202,228 +225,234 @@ function parseTOC(tocContent) {
   const chapters = [];
   let current = null;
 
-  for (let line of lines) {
-    const chapterMatch = line.match(/^(?:Chapter\s+\d+:|(?:\d+\.))\s*(.+)$/i);
-    if (chapterMatch && !line.startsWith('  -')) {
-      if (current) chapters.push(current);
-      current = { title: chapterMatch[1].trim(), subtopics: [] };
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    
+    if (!line) continue;
+
+    if (line.length === 1 && /^[A-Z]$/.test(line) && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      if (nextLine && nextLine.length > 5 && !nextLine.match(/^[\s]*[-•*·\d]/) && !nextLine.startsWith(' ')) {
+        line = line + nextLine;
+        i++;
+      }
+    }
+
+    const chapterMatch = line.match(/^Chapter\s+\d+:\s*(.+)$/i);
+    const simpleMatch = line.match(/^(?:\d+[\.\):]|\d+\s+|[-\*•])\s*(.+)$/i);
+    const chapMatch = chapterMatch || simpleMatch;
+    
+    if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
+      let title = chapMatch[1].trim();
+      title = title.replace(/[:–—*]\s*$/, '').trim();
+      title = title.replace(/^\d+\.\s*/, '');
+      
+      if (title && title.length > 10 && !/^(introduction|chapter|basics|overview|conclusion)$/i.test(title)) {
+        if (current) chapters.push(current);
+        current = { title, subtopics: [] };
+      }
     } else if (current && line.match(/^[\s]*[-•*·]\s+(.+)$/)) {
-      current.subtopics.push(line.match(/^[\s]*[-•*·]\s+(.+)$/)[1].trim());
+      const sub = line.match(/^[\s]*[-•*·]\s+(.+)$/)[1].trim();
+      if (sub && sub.length > 5 && !/^(subtopic|section|part)/i.test(sub)) {
+        current.subtopics.push(sub);
+      }
     }
   }
   if (current) chapters.push(current);
-  return chapters.filter(c => c.subtopics.length >= 3).slice(0, 10);
+
+  const valid = chapters.filter(c => c.subtopics.length >= 3);
+  logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
+  
+  return valid.slice(0, 10);
 }
 
 function generateFallbackTOC(bookTopic) {
-  return { 
-    parsed: Array(10).fill(0).map((_, i) => ({
-      title: `Core Principle ${i+1}: Deep Dive into ${bookTopic}`,
-      subtopics: ["Theoretical Foundation", "Practical Implementation", "Advanced Considerations"]
-    }))
-  };
+  const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
+  
+  const base = [
+    "Introduction to Core Concepts",
+    "Essential Principles and Practices", 
+    "Understanding Key Systems",
+    "Practical Applications and Techniques",
+    "Advanced Topics and Future Trends",
+    "Case Studies and Real-World Examples",
+    "Implementation Strategies",
+    "Optimization and Best Practices",
+    "Troubleshooting and Common Issues",
+    "Future Directions and Innovations"
+  ];
+  
+  const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
+  const suffix = isTechName ? ` in ${cleanTopic}` : '';
+  
+  const chapters = base.map((t, i) => ({
+    title: `${t}${suffix}`,
+    subtopics: [
+      "Understanding the core concept",
+      "Practical applications",
+      "Common challenges and how to address them"
+    ]
+  }));
+  
+  const raw = chapters.map(c =>
+    `${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
+  ).join('\n\n');
+  
+  return { raw, parsed: chapters };
 }
 
-// ==================== AI GENERATORS ====================
-
-async function askAI(prompt, userId, context, options = {}) {
+// ==================== AI INTERACTION ====================
+async function askAI(prompt, userId, bookTopic, options = {}) {
   await userRateLimiter.wait(userId);
-  
-  for (let attempt = 0; attempt < 3; attempt++) {
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const result = await ensureCerebras().chat.completions.create({
-        model: 'gpt-oss-120b',
+        model: MODEL_NAME,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: options.max_tokens || 4000,
-        temperature: options.temperature || 0.4,
+        max_tokens: options.genOptions?.maxOutputTokens || 4000,
+        temperature: options.genOptions?.temperature || 0.7,
+        stream: false
       });
       
-      const reply = result.choices[0]?.message?.content || '';
-      if (reply.length < (options.minLength || 100)) throw new Error("Response too short");
+      let reply = result.choices[0].message.content || '';
+      
+      if (!reply || reply.length < 50) {
+        logger.warn(`Empty reply on attempt ${attempt + 1}, retrying...`);
+        if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+        continue;
+      }
+
+      if (options.minLength && reply.length < options.minLength) {
+        throw new Error(`Response too short: ${reply.length} < ${options.minLength}`);
+      }
+
+      if (options.saveToHistory) {
+        const hist = userHistories.get(userId) || [];
+        hist.push({ role: 'user', content: prompt });
+        hist.push({ role: 'assistant', content: reply });
+        userHistories.set(userId, hist);
+        saveConversationHistory(userId, hist);
+      }
       return reply;
     } catch (e) {
-      logger.warn(`AI attempt ${attempt+1} failed: ${e.message}`);
-      if (attempt === 2) throw e;
-      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+      logger.error(`AI call error (attempt ${attempt + 1}): ${e.message}`);
+      if (attempt === maxRetries - 1) throw e;
+      await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
     }
   }
 }
 
+// ==================== CONTENT GENERATION ====================
 async function generateTOC(bookTopic, userId) {
-  const prompt = `You are a Distinguished Professor creating a university-level textbook on "${bookTopic}".
+  const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
+REQUIREMENTS (FOLLOW EXACTLY):
+- Output EXACTLY 10 chapters
+- Use the format: "Chapter X: Title" on its own line
+- Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
+- NO extra text, NO explanations, NO markdown
+- Make titles descriptive and unique`;
 
-CURRICULUM DESIGN PRINCIPLES:
-1. **Progressive Complexity**: Foundations → Core Theory → Advanced Applications → Expert Mastery
-2. **Prerequisite Chaining**: Each chapter builds directly on the previous
-3. **Depth Over Breadth**: 10 chapters that go DEEP, not 20 shallow ones
+  let attempts = 0;
+  while (attempts < 5) {
+    const genOptions = { maxOutputTokens: 1000, temperature: 0.3, topP: 0.8 };
+    try {
+      const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
+      
+      const cleaned = cleanUpAIText(rawTOC);
+      const parsed = parseTOC(cleaned);
 
-OUTPUT FORMAT (STRICT):
-Chapter 1: [Foundation Title]
-   - Subtopic 1: Core definition with mathematical/formal rigor
-   - Subtopic 2: Historical development and context
-   - Subtopic 3: Fundamental mechanisms/algorithms
-   - Subtopic 4: Simple applications
-
-Chapter 2: [Next Level Title]
-   - Subtopic 1: Builds on Ch1's mechanisms
-   - Subtopic 2: Intermediate theory
-   - Subtopic 3: Complex applications
-   - Subtopic 4: Edge cases and limitations
-
-... (Continue for all 10 chapters)
-
-REQUIREMENTS:
-- EXACTLY 10 chapters
-- Subtopics must be SPECIFIC and actionable
-- NO generic phrases like "Understanding Basics"
-- Each subtopic should map to a 3-5 minute lecture segment
-
-Generate the complete TOC.`;
-
-  try {
-    const raw = await askAI(prompt, userId, "TOC", { max_tokens: 1200 });
-    const parsed = parseTOC(raw);
-    if (parsed.length >= 8) return { raw, parsed };
-  } catch (e) {
-    logger.error(`TOC generation failed: ${e.message}`);
+      if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
+        logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
+        return { raw: cleaned, parsed };
+      }
+      
+      logger.warn(`❌ TOC invalid – attempt ${attempts + 1}: Got ${parsed.length} chapters`);
+    } catch (e) {
+      logger.error(`❌ TOC AI error – attempt ${attempts + 1}: ${e.message}`);
+    }
+    attempts++;
   }
+
+  logger.warn(`⚠️ TOC failed after 5 attempts – using fallback for "${bookTopic}"`);
   return generateFallbackTOC(bookTopic);
 }
 
-async function generateChapter(bookTopic, chNum, chapterInfo, globalContext, userId) {
-  const subtopics = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
-  
-  const prompt = `You are writing Chapter ${chNum}: "${chapterInfo.title}" for a textbook on "${bookTopic}".
+async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
+  const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
 
-STUDENT'S PRIOR KNOWLEDGE:
-${globalContext || "This is the foundation chapter. Assume intelligent but uninformed reader."}
+  const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
+CRITICAL FORMATTING RULES:
+- Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
+- Do NOT repeat the title as a second heading
+- Use ### for ALL subsections
+- ALL tables MUST use strict GitHub Markdown table syntax
+- NO HTML tags like <header> or <footer>
+- 600+ words total
 
-PEDAGOGICAL FRAMEWORK (Follow EXACTLY):
-For EACH subtopic, use this structure:
+**DIAGRAMS (Optional):**
+- Create Mermaid diagrams ONLY if they help explain complex concepts
+- If used: Wrap in \`\`\`mermaid \`\`\` blocks
+- Quote node labels with parentheses: A["User (Admin)"]
+- Immediately after each diagram block, add EXACTLY one line: *Figure caption: Brief description of the diagram*
 
-### [Subtopic Title]
+MANDATORY STRUCTURE:
+1) Introduction: Overview.
+2) SECTIONS: Create a subsection (###) for EACH subtopic:
+${subtopicList}
+3) Practical Application: Real-world example.
+4) Further Reading: 2-3 references.
 
-**Intuition (Mental Model):** 
-Explain the concept as if teaching a smart 15-year-old. Use analogies, metaphors, and simple language. This section is NON-NEGOTIABLE.
+Output ONLY the chapter content.`;
 
-**Formal Definition:**
-Provide the rigorous mathematical, technical, or formal definition. Use LaTeX for equations: $$E=mc^2$$
-
-**Mechanics (How It Works):**
-Detail the step-by-step mechanisms, algorithms, or processes. Include code snippets if applicable.
-
-**Real-World Application:**
-A concrete example from industry, science, or technology. Name specific companies, tools, or research papers.
-
-**Common Pitfalls & Edge Cases:**
-What mistakes do experts make? What breaks this concept? Include 1-2 "gotchas".
-
-**[!PRO-TIP]**
-Insert one expert-level insight that accelerates mastery.
-
-SUBTOPICS TO COVER:
-${subtopics}
-
-WRITING CONSTRAINTS:
-- Minimum 2000 words for this chapter
-- Use ### for subtopic headers
-- Use **bold** for key terms
-- Include Mermaid diagrams for complex relationships
-- NEVER write "This chapter covers" or "In conclusion"
-- Teach AS YOU WRITE, don't summarize
-
-OUTPUT ONLY THE CHAPTER CONTENT.`;
-
-  return cleanUpAIText(await askAI(prompt, userId, `Chapter ${chNum}`, { 
-    max_tokens: 6000,
-    minLength: 1800 
+  return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
+    minLength: 1800,
+    genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
   }));
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
-  const prompt = `Write the final chapter of "${bookTopic}".
-
-SUMMARIZE THE INTELLECTUAL JOURNEY:
-1. Recap the core principles from each major section
-2. Synthesize how they interconnect to create expert understanding
-3. Pose 2-3 unsolved problems or future directions in the field
-4. Challenge the reader to apply their knowledge to a real project
-
-Tone: Inspiring, authoritative, like a commencement address from a Nobel laureate.
-
-Length: 800-1000 words.`;
-
-  return cleanUpAIText(await askAI(prompt, userId, "Conclusion", { max_tokens: 2000 }));
+  const titles = chapterInfos.map(c => c.title).join(', ');
+  const prompt = `Write a professional conclusion for a book about "${bookTopic}". Summarize: ${titles}. 350 words.`;
+  
+  return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
+    minLength: 1200,
+    genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
+  }));
 }
 
 // ==================== PDF GENERATION ====================
-function generateMeshGradient() {
-  const h1 = Math.floor(Math.random() * 360);
-  const h2 = (h1 + 60) % 360;
-  const h3 = (h1 + 180) % 360;
-  return `background-color: hsl(${h1}, 60%, 50%);
-          background-image: 
-            radial-gradient(at 40% 20%, hsla(${h2}, 100%, 74%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 0%, hsla(${h3}, 100%, 56%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 50%, hsla(${h2}, 100%, 93%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 50%, hsla(${h3}, 100%, 76%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 100%, hsla(${h1}, 100%, 78%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 100%, hsla(${h2}, 100%, 56%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 0%, hsla(${h3}, 100%, 78%, 1) 0px, transparent 50%);`;
-}
-
-function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapterInfos) {
-  const meshBg = generateMeshGradient();
+function buildEnhancedHTML(content, bookTitle, figures = []) {
+  const cleaned = cleanUpAIText(content);
+  const formattedContent = formatMath(cleaned);
   
-  const tocHTML = `
-    <div class="chapter-break"></div>
-    <h1>📚 Table of Contents</h1>
-    <div class="toc-container">
-      ${chapterInfos.map((ch, i) => `
-        <div class="toc-chapter">
-          <div class="toc-title">${i + 1}. ${ch.title}</div>
-          <div class="toc-subtopics">
-            ${ch.subtopics.map(s => `<span class="toc-sub">• ${s}</span>`).join('')}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-    <div class="chapter-break"></div>
-  `;
-
-  const glossaryHTML = glossary?.length ? `
-    <div class="chapter-break"></div>
-    <h1>🎓 Technical Glossary</h1>
-    <dl class="glossary-list">
-      ${glossary.sort((a,b) => a.term.localeCompare(b.term)).map(item => `
-        <dt>${item.term}</dt>
-        <dd>${item.def}</dd>
-      `).join('')}
-    </dl>
-  ` : '';
-
-  const finalContent = content.replace(/__FIGURE__(\d+)__/g, (_, i) => {
+  // Restore figures with captions
+  const finalContent = formattedContent.replace(/__FIGURE__(\d+)__/g, (_, i) => {
     const fig = figures[parseInt(i)];
     if (!fig) return '';
-    return `
-      <figure style="text-align: center; margin: 2.5em 0;">
-        <img src="${fig.base64}" alt="${fig.caption}" style="max-width: 90%; height: auto; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 6px 12px rgba(0,0,0,0.1);">
-        <figcaption style="margin-top: 0.8em; font-style: italic; color: #6b7280; font-size: 0.95em;">Figure ${fig.figNum}: ${fig.caption}</figcaption>
-      </figure>
-    `;
+    return `<figure style="text-align: center; margin: 2em 0;">
+      <img src="${fig.base64}" alt="${fig.caption}" style="max-width: 85%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+      <figcaption style="margin-top: 0.5em; font-style: italic; color: #6b7280; font-size: 0.9em;">Figure ${fig.figNum}: ${fig.caption}</figcaption>
+    </figure>`;
   });
+
+  const titleMatch = cleaned.match(/^#\s+(.+)$/m);
+  let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
+  displayTitle = displayTitle
+    .replace(/^Chapter\s+\d+:\s*/i, '')
+    .replace(/^\d+\.\s*/, '')
+    .trim();
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${bookTitle} - Expert Textbook</title>
-  
+  <title>${displayTitle} - Bookgen.ai</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-  
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
@@ -431,280 +460,206 @@ function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapt
     };
   </script>
   <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
   <style>
-    @page { margin: 25mm 20mm; size: A4; }
+    @page { margin: 90px 70px 80px 70px; size: A4; }
     .cover-page { page: cover; }
-    @page cover { margin: 0; }
-    
-    body { 
-      font-family: 'Crimson Text', serif; 
-      font-size: 11.5pt; 
-      line-height: 1.7; 
-      color: #1a1a1a; 
-      text-align: justify; 
-      hyphens: auto;
-      background: white;
-    }
-    
-    .cover-page {
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      text-align: center;
-      color: white;
-      margin: -25mm -20mm;
-      padding: 20mm;
-      ${meshBg}
-    }
-    
-    .cover-title {
-      font-family: 'Inter', sans-serif;
-      font-size: 3em;
-      font-weight: 700;
-      margin-bottom: 0.3em;
-      text-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      border: none !important;
-    }
-    
-    .cover-subtitle {
-      font-family: 'Inter', sans-serif;
-      font-size: 1.2em;
-      font-weight: 300;
-      opacity: 0.9;
-      margin-bottom: 2em;
-    }
-    
-    h1, h2, h3 {
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      page-break-after: avoid;
-    }
-    
-    h1 {
-      font-size: 2.2em;
-      border-bottom: 4px solid #667eea;
-      padding-bottom: 15px;
-      margin-top: 2em;
-      color: #111;
-    }
-    
-    h2 {
-      font-size: 1.6em;
-      margin-top: 1.8em;
-      margin-bottom: 0.8em;
-      color: #222;
-    }
-    
-    h3 {
-      font-size: 1.3em;
-      margin-top: 1.5em;
-      color: #333;
-      font-weight: 600;
-    }
-    
-    .toc-container {
-      margin: 2em 0;
-    }
-    
-    .toc-chapter {
-      margin-bottom: 2em;
-    }
-    
-    .toc-title {
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      font-size: 1.1em;
-      margin-bottom: 0.5em;
-    }
-    
-    .toc-subtopics {
-      margin-left: 1.5em;
-      font-size: 0.9em;
-      color: #555;
-      line-height: 1.4;
-    }
-    
-    .callout {
-      padding: 1.2em;
-      margin: 1.5em 0;
-      border-left: 5px solid;
-      border-radius: 6px;
-      font-family: 'Inter', sans-serif;
-      font-size: 0.9em;
-      page-break-inside: avoid;
-    }
-    
-    .callout-tip { border-color: #10b981; background: #ecfdf5; color: #065f46; }
-    .callout-warning { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
-    .callout-note { border-color: #3b82f6; background: #eff6ff; color: #1e40af; }
-    
-    .glossary-list dt {
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-      color: #1e40af;
-      margin-top: 1.2em;
-    }
-    
-    .glossary-list dd {
-      margin-left: 0;
-      margin-bottom: 0.5em;
-      color: #374151;
-    }
-    
-    code {
-      background: #f3f4f6;
-      padding: 3px 6px;
-      border-radius: 4px;
-      font-family: 'Fira Code', monospace;
-      font-size: 0.9em;
-      color: #1e40af;
-    }
-    
-    pre {
-      background: #1f2937;
-      color: #e5e7eb;
-      padding: 1.2em;
-      border-radius: 8px;
-      overflow-x: auto;
-      margin: 1.5em 0;
-    }
-    
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 1.5em 0;
-    }
-    
-    th, td {
-      border: 1px solid #e5e7eb;
-      padding: 10px;
-      text-align: left;
-    }
-    
-    th {
-      background: #f9fafb;
-      font-weight: 600;
-    }
-    
-    .disclaimer-footer {
-      margin-top: 4em;
-      padding-top: 2em;
-      border-top: 2px solid #e5e7eb;
-      font-size: 0.8em;
-      color: #6b7280;
-      text-align: center;
-      font-style: italic;
-    }
+    @page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
+    body { font-family: 'Merriweather', Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; background: white; margin: 0; padding: 0; text-align: justify; hyphens: auto; }
+    .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
+    .cover-title { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 700; margin-bottom: 0.3em; line-height: 1.2; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
+    .cover-subtitle { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 300; margin-bottom: 2em; opacity: 0.9; }
+    .cover-meta { position: absolute; bottom: 60px; font-size: 14px; font-weight: 300; opacity: 0.8; }
+    .cover-disclaimer { margin-top: 30px; font-size: 12px; color: #fecaca; font-style: italic; }
+    h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; }
+    h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
+    h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
+    h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
+    h3 { font-size: 18px; color: #6b7280; }
+    .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
+    code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
+    pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
+    blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
+    blockquote::before { content: "“"; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
+    .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
+    .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
+    table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
+    td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
+    .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
   </style>
 </head>
 <body>
   <div class="cover-page">
-    <h1 class="cover-title">${bookTitle}</h1>
-    <p class="cover-subtitle">An Expert-Level Textbook</p>
-    <div style="font-size: 0.9em; opacity: 0.8;">
-      Generated by AI Assistant<br>
-      ${new Date().toLocaleDateString()}
+    <div class="cover-content">
+      <h1 class="cover-title">Bookgen.AI</h1>
+      <h2 class="cover-subtitle">A Guide book</h2>
+      <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
     </div>
+    <div class="cover-meta">Generated by bookgen.ai<br>${new Date().toLocaleDateString()}</div>
   </div>
-  ${tocHTML}
   <div class="chapter-content">${marked.parse(finalContent)}</div>
-  ${glossaryHTML}
-  <div class="disclaimer-footer">
-    ⚠️ This textbook was generated by AI. While designed for accuracy and depth, please verify critical information independently.
-  </div>
+  <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
   <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
 </body>
 </html>`;
 }
 
-// ==================== MAIN GENERATOR ====================
-export async function generateBookMedd(rawTopic, userId) {
-  // FIX: Limit topic length to prevent insane titles
-  const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim().slice(0, 100);
-  const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
-  
-  const state = CheckpointManager.load(safeUserId) || {
-    bookTopic,
-    chapterInfos: [],
-    completedChapters: 0,
-    generatedFiles: [],
-    glossaryAccumulator: [],
-    runningContext: "",
-    tocGenerated: false
-  };
-
-  logger.info(`=== 🚀 Generating Expert Textbook: "${bookTopic}" ===`);
-
+async function generatePDF(content, outputPath, bookTitle) {
   try {
-    // Step 1: Generate Syllabus
-    if (!state.tocGenerated) {
-      const { parsed } = await generateTOC(bookTopic, safeUserId);
-      state.chapterInfos = parsed;
-      state.tocGenerated = true;
-      CheckpointManager.save(safeUserId, state);
-    }
-
-    // Step 2: Generate Chapters
-    for (let i = state.completedChapters; i < state.chapterInfos.length; i++) {
-      const info = state.chapterInfos[i];
-      const chNum = i + 1;
-      logger.info(`📝 Writing Chapter ${chNum}: ${info.title}`);
-
-      // Generate deep content
-      const content = await generateChapter(bookTopic, chNum, info, state.runningContext, safeUserId);
-      
-      // Update running context
-      const summary = `Chapter ${chNum}: ${info.title} - Key concepts mastered: ${info.subtopics.slice(0, 2).join(', ')}`;
-      state.runningContext += `\n${summary}`;
-      
-      state.generatedFiles.push(`\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${content}\n\n---\n`);
-      state.completedChapters = chNum;
-      CheckpointManager.save(safeUserId, state);
-    }
-
-    // Step 3: Conclusion
-    const conclusion = await generateConclusion(bookTopic, state.chapterInfos, safeUserId);
-    state.generatedFiles.push(`\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
-
-    // Step 4: Generate PDF
-    logger.info('📚 Assembling final PDF...');
-    const fullText = state.generatedFiles.join('\n');
-    const { content: processedText, figures } = await formatDiagrams(formatMath(fullText));
-    const html = buildEnhancedHTML(processedText, bookTitle, figures, state.glossary, [], state.chapterInfos);
-
+    logger.info('🎨 Rendering diagrams (if any)...');
+    const { content: processedContent, figures } = await formatDiagrams(content);
+    
+    const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, figures);
+    
     const form = new FormData();
-    form.append('instructions', JSON.stringify({
+    const instructions = {
       parts: [{ html: "index.html" }],
       output: {
         format: "pdf",
         pdf: {
-          margin: { top: "20mm", bottom: "20mm", left: "20mm", right: "20mm" },
-          printBackground: true
+          margin: { top: "90px", bottom: "80px", left: "70px", right: "70px" },
+          header: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
+            spacing: "5mm"
+          },
+          footer: {
+            content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
+            spacing: "5mm"
+          },
+          waitDelay: 3000,
+          printBackground: true,
+          preferCSSPageSize: true
         }
       }
-    }));
-    form.append('index.html', Buffer.from(html), { filename: 'index.html', contentType: 'text/html' });
+    };
+    
+    form.append('instructions', JSON.stringify(instructions));
+    form.append('index.html', Buffer.from(enhancedHtml), {
+      filename: 'index.html',
+      contentType: 'text/html'
+    });
 
-    const response = await fetch('https://api.nutrient.io/v1/build', {
+    const response = await fetch('https://api.nutrient.io/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
     });
 
-    if (!response.ok) throw new Error(await response.text());
-    
-    const pdfPath = path.join(OUTPUT_DIR, `ExpertBook_${safeUserId}.pdf`);
-    fs.writeFileSync(pdfPath, Buffer.from(await response.arrayBuffer()));
-    
-    logger.info(`✅ SUCCESS: ${pdfPath}`);
-    CheckpointManager.clear(safeUserId);
-    return pdfPath;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
+    }
 
+    const pdfBuffer = await response.buffer();
+    fs.writeFileSync(outputPath, pdfBuffer);
+    logger.info(`✅ PDF generated: ${outputPath}`);
+    return outputPath;
+  } catch (error) {
+    logger.error(`❌ PDF generation failed: ${error.message}`);
+    throw error;
+  }
+}
+
+// ==================== HELPER FUNCTIONS ====================
+function getHistoryFile(userId) {
+  return path.join(HISTORY_DIR, `history-${userId}.json`);
+}
+
+function loadConversationHistory(userId) {
+  try {
+    return JSON.parse(fs.readFileSync(getHistoryFile(userId), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveConversationHistory(userId, history) {
+  fs.writeFileSync(getHistoryFile(userId), JSON.stringify(history, null, 2));
+}
+
+function saveToFile(filename, content) {
+  fs.writeFileSync(filename, content);
+  logger.info(`Saved: ${filename}`);
+}
+
+function deleteFile(filePath) {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    logger.warn(`Delete failed: ${filePath}`);
+  }
+}
+
+// ==================== MAIN GENERATOR ====================
+export async function generateBookMedd(rawTopic, userId) {
+  const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
+  const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
+  logger.info(`=== Starting: "${bookTopic}" for ${safeUserId} ===`);
+
+  try {
+    userHistories.delete(safeUserId);
+    const { raw: tocRaw, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
+    
+    // Format TOC for PDF
+    const formattedTOC = chapterInfos.map((ch, i) => {
+      const num = i + 1;
+      return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
+    }).join('\n\n');
+    
+    const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
+    saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
+    const files = [tocFile];
+
+    // Generate chapters
+    logger.info('Step 2/3: Generating chapters...');
+    for (let i = 0; i < chapterInfos.length; i++) {
+      if (global.cancelFlags?.[safeUserId]) {
+        delete global.cancelFlags[safeUserId];
+        throw new Error('Generation cancelled');
+      }
+
+      const chNum = i + 1;
+      const info = chapterInfos[i];
+      logger.info(` ${chNum}. ${info.title}`);
+      
+      const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
+      const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapter}\n\n---\n`;
+      
+      const f = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chNum}.txt`);
+      saveToFile(f, txt);
+      files.push(f);
+    }
+
+    // Generate conclusion
+    logger.info('Step 3/3: Generating conclusion...');
+    const conclusion = await generateConclusion(bookTopic, chapterInfos, safeUserId);
+    const conclFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
+    saveToFile(conclFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
+    files.push(conclFile);
+
+    // Combine and generate PDF
+    logger.info('Combining content and generating PDF...');
+    const combined = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+    const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
+    const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
+    
+    await generatePDF(combined, pdfPath, bookTopic);
+
+    // Cleanup
+    files.forEach(deleteFile);
+    userHistories.delete(safeUserId);
+    
+    logger.info(`=== SUCCESS: ${pdfPath} ===`);
+    return pdfPath;
   } catch (e) {
-    logger.error(`❌ FATAL ERROR: ${e.message}`);
+    logger.error(`❌ Failed: ${e.message}`);
     throw e;
   }
 }
@@ -727,702 +682,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-// import Cerebras from '@cerebras/cerebras_cloud_sdk';
-// import { marked } from 'marked';
-// import hljs from 'highlight.js';
-// import fs from 'fs';
-// import path from 'path';
-// import { fileURLToPath } from 'url';
-// import async from 'async';
-// import winston from 'winston';
-// import fetch from 'node-fetch';
-// import FormData from 'form-data';
-// import dotenv from 'dotenv';
-
-// dotenv.config();
-
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = path.dirname(__filename);
-
-// // ==================== CORE SETUP ====================
-// class RateLimiter {
-//   constructor(requestsPerMinute) {
-//     this.limit = requestsPerMinute;
-//     this.users = new Map();
-//   }
-
-//   async wait(userId) {
-//     const now = Date.now();
-//     if (!this.users.has(userId)) this.users.set(userId, []);
-    
-//     const userRequests = this.users.get(userId);
-//     const recent = userRequests.filter(t => now - t < 60000);
-//     this.users.set(userId, recent);
-
-//     while (recent.length >= this.limit) {
-//       const oldest = recent[0];
-//       const waitTime = 60000 - (now - oldest) + 1000;
-//       await new Promise(resolve => setTimeout(resolve, waitTime));
-//     }
-
-//     recent.push(now);
-//     this.users.set(userId, recent);
-//   }
-// }
-
-// const userRateLimiter = new RateLimiter(30);
-// const HISTORY_DIR = path.join(__dirname, 'history');
-// const OUTPUT_DIR = path.join(__dirname, '../pdfs');
-// const CHAPTER_PREFIX = 'chapter';
-// const MODEL_NAME = 'gpt-oss-120b';
-// const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
-
-// let cerebras = null;
-// function ensureCerebras() {
-//   if (cerebras) return cerebras;
-//   const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
-//   if (!key) {
-//     throw new Error('CEREBRAS_API_KEY is not set in environment.');
-//   }
-//   cerebras = new Cerebras({ apiKey: key });
-//   return cerebras;
-// }
-
-// const userHistories = new Map();
-
-// const logger = winston.createLogger({
-//   level: 'info',
-//   format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
-//   transports: [
-//     new winston.transports.File({ filename: 'bookgen.log' }),
-//     new winston.transports.Console({ format: winston.format.simple() })
-//   ]
-// });
-
-// fs.mkdirSync(HISTORY_DIR, { recursive: true });
-// fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-
-// // ==================== TEXT PROCESSING ====================
-// function cleanUpAIText(text) {
-//   if (!text) return '';
-//   let clean = text
-//     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
-//     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
-//     .replace(/^\s*Table of Contents\s*$/gim, '')
-//     .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
-//     .replace(/\b([A-Z])\s+([a-z]{2,})\b/g, (match, p1, p2) => {
-//       if (match.includes('`') || match.includes('```')) return match;
-//       return p1 + p2;
-//     })
-//     .replace(/\\([[\]{}()])/g, '$1')
-//     .replace(/\n{3,}/g, '\n\n')
-//     .replace(/[\u2013\u2014]/g, '-')
-//     .replace(/\*\s*$/gm, '')
-//     .trim();
-
-//   clean = clean.replace(/\\(\$)/g, '$');
-//   return clean;
-// }
-
-// function formatMath(content) {
-//   const tables = [];
-//   const codeBlocks = [];
-
-//   content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, (tbl) => {
-//     tables.push(tbl);
-//     return `__TABLE__${tables.length - 1}__`;
-//   });
-
-//   content = content.replace(/```[\w]*\n([\s\S]*?)```/g, (match) => {
-//     codeBlocks.push(match);
-//     return `__CODE__${codeBlocks.length - 1}__`;
-//   });
-
-//   content = content.replace(/`([^`]+)`/g, (match) => {
-//     codeBlocks.push(match);
-//     return `__CODE__${codeBlocks.length - 1}__`;
-//   });
-
-//   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
-//   content = content.replace(/\\wedge/g, '^');
-//   content = content.replace(/\{\\\^\}/g, '^');
-
-//   content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
-//   content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
-
-//   return content;
-// }
-
-// // ==================== MARKED SETUP ====================
-// marked.setOptions({
-//   headerIds: false,
-//   breaks: true,
-//   gfm: true,
-//   highlight: function(code, lang) {
-//     if (lang && hljs.getLanguage(lang)) {
-//       return hljs.highlight(code, { language: lang }).value;
-//     }
-//     return code;
-//   }
-// });
-
-// // ==================== DIAGRAM LOGIC ====================
-// function repairMermaidSyntax(code) {
-//   let fixed = code
-//     .replace(/^mermaid\s*\n/i, '')
-//     .replace(/\[([^\]]*?\(.*?\)[^\]]*?)\]/g, (match, content) => {
-//       if (content.startsWith('"') && content.endsWith('"')) return match;
-//       return `["${content.replace(/"/g, "'")}"]`;
-//     })
-//     .replace(/-->;\s*$/gm, '-->')
-//     .replace(/-->;\s*\n?\s*([A-Z])/g, '--> $1')
-//     .replace(/\n{2,}/g, '\n')
-//     .replace(/-->\s*$/gm, '--> EndNode[End]');
-//   return fixed.trim();
-// }
-
-// async function formatDiagrams(content) {
-//   const figures = [];
-//   const diagramCounts = {};
-//   const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
-
-//   const chapterMatches = [...content.matchAll(/# Chapter (\d+):/g)];
-//   const chapterPositions = chapterMatches.map(m => ({ num: parseInt(m[1]), pos: m.index }));
-//   const matches = [...content.matchAll(diagramRegex)];
-
-//   if (matches.length > 0) {
-//     logger.info(`🔍 Found ${matches.length} mermaid code blocks. Rendering...`);
-//   }
-
-//   for (let match of matches) {
-//     const fullMatch = match[0];
-//     const rawCode = match[1].trim();
-//     const caption = match[2] ? match[2].trim() : 'Illustration of the concept';
-//     const code = repairMermaidSyntax(rawCode);
-
-//     let currentChapter = 0;
-//     for (let i = chapterPositions.length - 1; i >= 0; i--) {
-//       if (chapterPositions[i].pos < match.index) {
-//         currentChapter = chapterPositions[i].num;
-//         break;
-//       }
-//     }
-//     if (currentChapter === 0) {
-//       currentChapter = chapterPositions.length > 0 ? chapterPositions[chapterPositions.length - 1].num : 1;
-//     }
-
-//     if (!diagramCounts[currentChapter]) diagramCounts[currentChapter] = 0;
-//     diagramCounts[currentChapter]++;
-//     const figNum = `${currentChapter}.${diagramCounts[currentChapter]}`;
-
-//     try {
-//       const response = await fetch('https://kroki.io/mermaid/svg', {
-//         method: 'POST',
-//         headers: {
-//           'Content-Type': 'text/plain',
-//           'Accept': 'image/svg+xml'
-//         },
-//         body: code
-//       });
-
-//       if (!response.ok) {
-//         if (response.status === 400) {
-//           logger.warn(`Invalid Mermaid Syntax Detected:\n${code}`);
-//         }
-//         throw new Error(`Kroki error: ${response.status}`);
-//       }
-
-//       const svg = await response.text();
-//       const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-
-//       figures.push({ base64, figNum, caption });
-//       content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
-//       logger.info(`✅ Diagram rendered successfully with caption: "${caption}"`);
-
-//     } catch (error) {
-//       logger.error(`❌ Failed to render diagram: ${error.message}`);
-//       content = content.replace(fullMatch, '');
-//     }
-//   }
-
-//   return { content, figures };
-// }
-
-// // ==================== TOC PARSER ====================
-// function parseTOC(tocContent) {
-//   const lines = tocContent.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
-//   const chapters = [];
-//   let current = null;
-
-//   for (let i = 0; i < lines.length; i++) {
-//     let line = lines[i];
-    
-//     if (!line) continue;
-
-//     if (line.length === 1 && /^[A-Z]$/.test(line) && i + 1 < lines.length) {
-//       const nextLine = lines[i + 1];
-//       if (nextLine && nextLine.length > 5 && !nextLine.match(/^[\s]*[-•*·\d]/) && !nextLine.startsWith(' ')) {
-//         line = line + nextLine;
-//         i++;
-//       }
-//     }
-
-//     const chapterMatch = line.match(/^Chapter\s+\d+:\s*(.+)$/i);
-//     const simpleMatch = line.match(/^(?:\d+[\.\):]|\d+\s+|[-\*•])\s*(.+)$/i);
-//     const chapMatch = chapterMatch || simpleMatch;
-    
-//     if (chapMatch && !line.startsWith('  -') && !line.match(/^[\s]*[-•*·]/)) {
-//       let title = chapMatch[1].trim();
-//       title = title.replace(/[:–—*]\s*$/, '').trim();
-//       title = title.replace(/^\d+\.\s*/, '');
-      
-//       if (title && title.length > 10 && !/^(introduction|chapter|basics|overview|conclusion)$/i.test(title)) {
-//         if (current) chapters.push(current);
-//         current = { title, subtopics: [] };
-//       }
-//     } else if (current && line.match(/^[\s]*[-•*·]\s+(.+)$/)) {
-//       const sub = line.match(/^[\s]*[-•*·]\s+(.+)$/)[1].trim();
-//       if (sub && sub.length > 5 && !/^(subtopic|section|part)/i.test(sub)) {
-//         current.subtopics.push(sub);
-//       }
-//     }
-//   }
-//   if (current) chapters.push(current);
-
-//   const valid = chapters.filter(c => c.subtopics.length >= 3);
-//   logger.debug(`✅ Parsed ${valid.length} valid chapters out of ${chapters.length} total`);
-  
-//   return valid.slice(0, 10);
-// }
-
-// function generateFallbackTOC(bookTopic) {
-//   const cleanTopic = bookTopic.replace(/\bin\s+.*$/i, '').trim();
-  
-//   const base = [
-//     "Introduction to Core Concepts",
-//     "Essential Principles and Practices", 
-//     "Understanding Key Systems",
-//     "Practical Applications and Techniques",
-//     "Advanced Topics and Future Trends",
-//     "Case Studies and Real-World Examples",
-//     "Implementation Strategies",
-//     "Optimization and Best Practices",
-//     "Troubleshooting and Common Issues",
-//     "Future Directions and Innovations"
-//   ];
-  
-//   const isTechName = cleanTopic.length > 2 && cleanTopic.length < 20 && !cleanTopic.includes(' ');
-//   const suffix = isTechName ? ` in ${cleanTopic}` : '';
-  
-//   const chapters = base.map((t, i) => ({
-//     title: `${t}${suffix}`,
-//     subtopics: [
-//       "Understanding the core concept",
-//       "Practical applications",
-//       "Common challenges and how to address them"
-//     ]
-//   }));
-  
-//   const raw = chapters.map(c =>
-//     `${c.title}\n${c.subtopics.map(s => `   - ${s}`).join('\n')}`
-//   ).join('\n\n');
-  
-//   return { raw, parsed: chapters };
-// }
-
-// // ==================== AI INTERACTION ====================
-// async function askAI(prompt, userId, bookTopic, options = {}) {
-//   await userRateLimiter.wait(userId);
-
-//   const maxRetries = 3;
-//   for (let attempt = 0; attempt < maxRetries; attempt++) {
-//     try {
-//       const result = await ensureCerebras().chat.completions.create({
-//         model: MODEL_NAME,
-//         messages: [{ role: "user", content: prompt }],
-//         max_tokens: options.genOptions?.maxOutputTokens || 4000,
-//         temperature: options.genOptions?.temperature || 0.7,
-//         stream: false
-//       });
-      
-//       let reply = result.choices[0].message.content || '';
-      
-//       if (!reply || reply.length < 50) {
-//         logger.warn(`Empty reply on attempt ${attempt + 1}, retrying...`);
-//         if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-//         continue;
-//       }
-
-//       if (options.minLength && reply.length < options.minLength) {
-//         throw new Error(`Response too short: ${reply.length} < ${options.minLength}`);
-//       }
-
-//       if (options.saveToHistory) {
-//         const hist = userHistories.get(userId) || [];
-//         hist.push({ role: 'user', content: prompt });
-//         hist.push({ role: 'assistant', content: reply });
-//         userHistories.set(userId, hist);
-//         saveConversationHistory(userId, hist);
-//       }
-//       return reply;
-//     } catch (e) {
-//       logger.error(`AI call error (attempt ${attempt + 1}): ${e.message}`);
-//       if (attempt === maxRetries - 1) throw e;
-//       await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
-//     }
-//   }
-// }
-
-// // ==================== CONTENT GENERATION ====================
-// async function generateTOC(bookTopic, userId) {
-//   const prompt = `Create a detailed table of contents for a book about "${bookTopic}".
-// REQUIREMENTS (FOLLOW EXACTLY):
-// - Output EXACTLY 10 chapters
-// - Use the format: "Chapter X: Title" on its own line
-// - Follow each chapter title with 3-5 subtopics, each on its own line, indented with 3 spaces and a dash: "   - Subtopic"
-// - NO extra text, NO explanations, NO markdown
-// - Make titles descriptive and unique`;
-
-//   let attempts = 0;
-//   while (attempts < 5) {
-//     const genOptions = { maxOutputTokens: 1000, temperature: 0.3, topP: 0.8 };
-//     try {
-//       const rawTOC = await askAI(prompt, userId, bookTopic, { saveToHistory: true, genOptions });
-      
-//       const cleaned = cleanUpAIText(rawTOC);
-//       const parsed = parseTOC(cleaned);
-
-//       if (parsed.length === 10 && parsed.every(c => c.subtopics.length >= 3)) {
-//         logger.info(`✅ TOC succeeded on attempt ${attempts + 1}`);
-//         return { raw: cleaned, parsed };
-//       }
-      
-//       logger.warn(`❌ TOC invalid – attempt ${attempts + 1}: Got ${parsed.length} chapters`);
-//     } catch (e) {
-//       logger.error(`❌ TOC AI error – attempt ${attempts + 1}: ${e.message}`);
-//     }
-//     attempts++;
-//   }
-
-//   logger.warn(`⚠️ TOC failed after 5 attempts – using fallback for "${bookTopic}"`);
-//   return generateFallbackTOC(bookTopic);
-// }
-
-// async function generateChapter(bookTopic, chapterNumber, chapterInfo, userId) {
-//   const subtopicList = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
-
-//   const prompt = `Write Chapter ${chapterNumber}: "${chapterInfo.title}" for a book about "${bookTopic}".
-// CRITICAL FORMATTING RULES:
-// - Start with EXACTLY ONE heading: "## ${chapterInfo.title}"
-// - Do NOT repeat the title as a second heading
-// - Use ### for ALL subsections
-// - ALL tables MUST use strict GitHub Markdown table syntax
-// - NO HTML tags like <header> or <footer>
-// - 600+ words total
-
-// **DIAGRAMS (Optional):**
-// - Create Mermaid diagrams ONLY if they help explain complex concepts
-// - If used: Wrap in \`\`\`mermaid \`\`\` blocks
-// - Quote node labels with parentheses: A["User (Admin)"]
-// - Immediately after each diagram block, add EXACTLY one line: *Figure caption: Brief description of the diagram*
-
-// MANDATORY STRUCTURE:
-// 1) Introduction: Overview.
-// 2) SECTIONS: Create a subsection (###) for EACH subtopic:
-// ${subtopicList}
-// 3) Practical Application: Real-world example.
-// 4) Further Reading: 2-3 references.
-
-// Output ONLY the chapter content.`;
-
-//   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-//     minLength: 1800,
-//     genOptions: { maxOutputTokens: 3500, temperature: 0.4 }
-//   }));
-// }
-
-// async function generateConclusion(bookTopic, chapterInfos, userId) {
-//   const titles = chapterInfos.map(c => c.title).join(', ');
-//   const prompt = `Write a professional conclusion for a book about "${bookTopic}". Summarize: ${titles}. 350 words.`;
-  
-//   return cleanUpAIText(await askAI(prompt, userId, bookTopic, {
-//     minLength: 1200,
-//     genOptions: { maxOutputTokens: 2000, temperature: 0.4 }
-//   }));
-// }
-
-// // ==================== PDF GENERATION ====================
-// function buildEnhancedHTML(content, bookTitle, figures = []) {
-//   const cleaned = cleanUpAIText(content);
-//   const formattedContent = formatMath(cleaned);
-  
-//   // Restore figures with captions
-//   const finalContent = formattedContent.replace(/__FIGURE__(\d+)__/g, (_, i) => {
-//     const fig = figures[parseInt(i)];
-//     if (!fig) return '';
-//     return `<figure style="text-align: center; margin: 2em 0;">
-//       <img src="${fig.base64}" alt="${fig.caption}" style="max-width: 85%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-//       <figcaption style="margin-top: 0.5em; font-style: italic; color: #6b7280; font-size: 0.9em;">Figure ${fig.figNum}: ${fig.caption}</figcaption>
-//     </figure>`;
-//   });
-
-//   const titleMatch = cleaned.match(/^#\s+(.+)$/m);
-//   let displayTitle = titleMatch ? titleMatch[1] : bookTitle;
-//   displayTitle = displayTitle
-//     .replace(/^Chapter\s+\d+:\s*/i, '')
-//     .replace(/^\d+\.\s*/, '')
-//     .trim();
-
-//   return `<!DOCTYPE html>
-// <html lang="en">
-// <head>
-//   <meta charset="utf-8">
-//   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-//   <title>${displayTitle} - Bookgen.ai</title>
-//   <link rel="preconnect" href="https://fonts.googleapis.com">
-//   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-//   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-//   <script>
-//     window.MathJax = {
-//       tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
-//       svg: { fontCache: 'global' }
-//     };
-//   </script>
-//   <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-//   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-//   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-//   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-//   <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-//   <style>
-//     @page { margin: 90px 70px 80px 70px; size: A4; }
-//     .cover-page { page: cover; }
-//     @page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
-//     body { font-family: 'Merriweather', Georgia, serif; font-size: 14px; line-height: 1.8; color: #1f2937; background: white; margin: 0; padding: 0; text-align: justify; hyphens: auto; }
-//     .cover-page { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; page-break-after: always; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: -90px -70px -80px -70px; padding: 70px; }
-//     .cover-title { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 700; margin-bottom: 0.3em; line-height: 1.2; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
-//     .cover-subtitle { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 300; margin-bottom: 2em; opacity: 0.9; }
-//     .cover-meta { position: absolute; bottom: 60px; font-size: 14px; font-weight: 300; opacity: 0.8; }
-//     .cover-disclaimer { margin-top: 30px; font-size: 12px; color: #fecaca; font-style: italic; }
-//     h1, h2, h3, h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: #1f2937; margin-top: 2.5em; margin-bottom: 0.8em; position: relative; }
-//     h1 { font-size: 28px; border-bottom: 3px solid #667eea; padding-bottom: 15px; margin-top: 0; page-break-before: always; }
-//     h1::after { content: ""; display: block; width: 80px; height: 3px; background: #764ba2; margin-top: 15px; }
-//     h2 { font-size: 22px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; color: #4b5563; }
-//     h3 { font-size: 18px; color: #6b7280; }
-//     .chapter-content > h1 + p::first-letter { float: left; font-size: 4em; line-height: 1; margin: 0.1em 0.1em 0 0; font-weight: 700; color: #667eea; font-family: 'Inter', sans-serif; }
-//     code { background: #f3f4f6; padding: 3px 8px; border: 1px solid #e5e7eb; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px; border-radius: 4px; color: #1e40af; }
-//     pre { background: #1f2937; padding: 20px; overflow-x: auto; border: 1px solid #4b5563; border-radius: 8px; line-height: 1.5; margin: 1.5em 0; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-//     pre code { background: none; border: none; padding: 0; color: #e5e7eb; }
-//     blockquote { border-left: 4px solid #667eea; margin: 2em 0; padding: 1em 1.5em; background: linear-gradient(to right, #f3f4f6 0%, #ffffff 100%); font-style: italic; border-radius: 0 8px 8px 0; position: relative; }
-//     blockquote::before { content: "“"; position: absolute; top: -20px; left: 10px; font-size: 80px; color: #d1d5db; font-family: 'Inter', sans-serif; line-height: 1; }
-//     .example { background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); border-left: 4px solid #3b82f6; padding: 20px; margin: 2em 0; border-radius: 0 8px 8px 0; font-style: italic; position: relative; }
-//     .example::before { content: "💡 Example"; display: block; font-weight: 600; color: #1d4ed8; margin-bottom: 10px; font-style: normal; }
-//     table { width: 100%; border-collapse: collapse; margin: 2em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-//     th { background: #374151; color: white; padding: 12px; text-align: left; font-family: 'Inter', sans-serif; font-weight: 600; }
-//     td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
-//     tr:nth-child(even) { background: #f9fafb; }
-//     .MathJax_Display { margin: 2em 0 !important; padding: 1em 0; overflow-x: auto; }
-//     .disclaimer-footer { margin-top: 4em; padding-top: 2em; border-top: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; font-style: italic; text-align: center; }
-//   </style>
-// </head>
-// <body>
-//   <div class="cover-page">
-//     <div class="cover-content">
-//       <h1 class="cover-title">Bookgen.AI</h1>
-//       <h2 class="cover-subtitle">A Guide book</h2>
-//       <div class="cover-disclaimer">⚠️ Caution: AI-generated content may contain errors</div>
-//     </div>
-//     <div class="cover-meta">Generated by bookgen.ai<br>${new Date().toLocaleDateString()}</div>
-//   </div>
-//   <div class="chapter-content">${marked.parse(finalContent)}</div>
-//   <div class="disclaimer-footer">This book was generated by AI for educational purposes. Please verify all information independently.</div>
-//   <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
-// </body>
-// </html>`;
-// }
-
-// async function generatePDF(content, outputPath, bookTitle) {
-//   try {
-//     logger.info('🎨 Rendering diagrams (if any)...');
-//     const { content: processedContent, figures } = await formatDiagrams(content);
-    
-//     const enhancedHtml = buildEnhancedHTML(processedContent, bookTitle, figures);
-    
-//     const form = new FormData();
-//     const instructions = {
-//       parts: [{ html: "index.html" }],
-//       output: {
-//         format: "pdf",
-//         pdf: {
-//           margin: { top: "90px", bottom: "80px", left: "70px", right: "70px" },
-//           header: {
-//             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Generated by bookgen.ai</div>',
-//             spacing: "5mm"
-//           },
-//           footer: {
-//             content: '<div style="font-size: 10px; text-align: center; width: 100%; color: #6b7280;">Page {pageNumber}</div>',
-//             spacing: "5mm"
-//           },
-//           waitDelay: 3000,
-//           printBackground: true,
-//           preferCSSPageSize: true
-//         }
-//       }
-//     };
-    
-//     form.append('instructions', JSON.stringify(instructions));
-//     form.append('index.html', Buffer.from(enhancedHtml), {
-//       filename: 'index.html',
-//       contentType: 'text/html'
-//     });
-
-//     const response = await fetch('https://api.nutrient.io/build', {
-//       method: 'POST',
-//       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
-//       body: form
-//     });
-
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`Nutrient API error: ${response.status} - ${errorText}`);
-//     }
-
-//     const pdfBuffer = await response.buffer();
-//     fs.writeFileSync(outputPath, pdfBuffer);
-//     logger.info(`✅ PDF generated: ${outputPath}`);
-//     return outputPath;
-//   } catch (error) {
-//     logger.error(`❌ PDF generation failed: ${error.message}`);
-//     throw error;
-//   }
-// }
-
-// // ==================== HELPER FUNCTIONS ====================
-// function getHistoryFile(userId) {
-//   return path.join(HISTORY_DIR, `history-${userId}.json`);
-// }
-
-// function loadConversationHistory(userId) {
-//   try {
-//     return JSON.parse(fs.readFileSync(getHistoryFile(userId), 'utf8'));
-//   } catch {
-//     return [];
-//   }
-// }
-
-// function saveConversationHistory(userId, history) {
-//   fs.writeFileSync(getHistoryFile(userId), JSON.stringify(history, null, 2));
-// }
-
-// function saveToFile(filename, content) {
-//   fs.writeFileSync(filename, content);
-//   logger.info(`Saved: ${filename}`);
-// }
-
-// function deleteFile(filePath) {
-//   try {
-//     fs.unlinkSync(filePath);
-//   } catch {
-//     logger.warn(`Delete failed: ${filePath}`);
-//   }
-// }
-
-// // ==================== MAIN GENERATOR ====================
-// export async function generateBookMedd(rawTopic, userId) {
-//   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
-//   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').toLowerCase().slice(0, 50)}`;
-//   logger.info(`=== Starting: "${bookTopic}" for ${safeUserId} ===`);
-
-//   try {
-//     userHistories.delete(safeUserId);
-//     const { raw: tocRaw, parsed: chapterInfos } = await generateTOC(bookTopic, safeUserId);
-    
-//     // Format TOC for PDF
-//     const formattedTOC = chapterInfos.map((ch, i) => {
-//       const num = i + 1;
-//       return `${num}. ${ch.title}\n${ch.subtopics.map(s => `   - ${s}`).join('\n')}`;
-//     }).join('\n\n');
-    
-//     const tocFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-toc.txt`);
-//     saveToFile(tocFile, `# Table of Contents\n\n${formattedTOC}\n\n---\n`);
-//     const files = [tocFile];
-
-//     // Generate chapters
-//     logger.info('Step 2/3: Generating chapters...');
-//     for (let i = 0; i < chapterInfos.length; i++) {
-//       if (global.cancelFlags?.[safeUserId]) {
-//         delete global.cancelFlags[safeUserId];
-//         throw new Error('Generation cancelled');
-//       }
-
-//       const chNum = i + 1;
-//       const info = chapterInfos[i];
-//       logger.info(` ${chNum}. ${info.title}`);
-      
-//       const chapter = await generateChapter(bookTopic, chNum, info, safeUserId);
-//       const txt = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${chapter}\n\n---\n`;
-      
-//       const f = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-${chNum}.txt`);
-//       saveToFile(f, txt);
-//       files.push(f);
-//     }
-
-//     // Generate conclusion
-//     logger.info('Step 3/3: Generating conclusion...');
-//     const conclusion = await generateConclusion(bookTopic, chapterInfos, safeUserId);
-//     const conclFile = path.join(OUTPUT_DIR, `${CHAPTER_PREFIX}-${safeUserId}-conclusion.txt`);
-//     saveToFile(conclFile, `\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
-//     files.push(conclFile);
-
-//     // Combine and generate PDF
-//     logger.info('Combining content and generating PDF...');
-//     const combined = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
-//     const safeName = bookTopic.slice(0, 30).replace(/\s+/g, '_');
-//     const pdfPath = path.join(OUTPUT_DIR, `book_${safeUserId}_${safeName}.pdf`);
-    
-//     await generatePDF(combined, pdfPath, bookTopic);
-
-//     // Cleanup
-//     files.forEach(deleteFile);
-//     userHistories.delete(safeUserId);
-    
-//     logger.info(`=== SUCCESS: ${pdfPath} ===`);
-//     return pdfPath;
-//   } catch (e) {
-//     logger.error(`❌ Failed: ${e.message}`);
-//     throw e;
-//   }
-// }
-
-// // ==================== QUEUE SYSTEM ====================
-// const bookQueue = async.queue(async (task, callback) => {
-//   try {
-//     const result = await generateBookMedd(task.bookTopic, task.userId);
-//     callback(null, result);
-//   } catch (error) {
-//     callback(error);
-//   }
-// }, 1);
-
-// export function queueBookGeneration(bookTopic, userId) {
-//   return new Promise((resolve, reject) => {
-//     bookQueue.push({ bookTopic, userId }, (error, result) => {
-//       if (error) reject(error);
-//       else resolve(result);
-//     });
-//   });
-// }
 
 
 
