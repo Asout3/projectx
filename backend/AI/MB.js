@@ -1,3 +1,4 @@
+// AI/MB.js – Expert-Grade Knowledge Generator
 import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -10,11 +11,17 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 import dotenv from 'dotenv';
 
-dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ==================== CORE SETUP ====================
+// Environment Setup
+if (!process.env.RAILWAY_ENVIRONMENT) {
+  dotenv.config({ path: path.join(__dirname, '../backend/.env') });
+}
+const CEREBRAS_API_KEY = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
+const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
+
+// ==================== CORE INFRASTRUCTURE ====================
 class RateLimiter {
   constructor(requestsPerMinute) {
     this.limit = requestsPerMinute;
@@ -24,41 +31,27 @@ class RateLimiter {
   async wait(userId) {
     const now = Date.now();
     if (!this.users.has(userId)) this.users.set(userId, []);
-    
-    const userRequests = this.users.get(userId);
-    const recent = userRequests.filter(t => now - t < 60000);
-    this.users.set(userId, recent);
-
+    const recent = this.users.get(userId).filter(t => now - t < 60000);
     while (recent.length >= this.limit) {
       const oldest = recent[0];
       const waitTime = 60000 - (now - oldest) + 1000;
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
-
     recent.push(now);
     this.users.set(userId, recent);
   }
 }
 
-const userRateLimiter = new RateLimiter(30);
+const userRateLimiter = new RateLimiter(25); // Cerebras: 30 req/min
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const STATE_DIR = path.join(__dirname, 'states');
-const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'gpt-oss-120b'; // Ensure this model ID is correct for your plan
-const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
-let cerebras = null;
-function ensureCerebras() {
-  if (cerebras) return cerebras;
-  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy'; 
-  if (!key) throw new Error("Missing CEREBRAS_API_KEY");
-  cerebras = new Cerebras({ apiKey: key });
-  return cerebras;
-}
+fs.mkdirSync(HISTORY_DIR, { recursive: true });
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+fs.mkdirSync(STATE_DIR, { recursive: true });
 
-const userHistories = new Map();
-
+// Logger
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
@@ -68,11 +61,16 @@ const logger = winston.createLogger({
   ]
 });
 
-fs.mkdirSync(HISTORY_DIR, { recursive: true });
-fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-fs.mkdirSync(STATE_DIR, { recursive: true });
+// ==================== AI CLIENT ====================
+let cerebras = null;
+function ensureCerebras() {
+  if (cerebras) return cerebras;
+  if (!CEREBRAS_API_KEY) throw new Error('CEREBRAS_API_KEY not set');
+  cerebras = new Cerebras({ apiKey: CEREBRAS_API_KEY });
+  return cerebras;
+}
 
-// ==================== CHECKPOINT SYSTEM ====================
+// ==================== STATE MANAGEMENT ====================
 class CheckpointManager {
   static getPath(userId) {
     return path.join(STATE_DIR, `state-${userId}.json`);
@@ -83,10 +81,10 @@ class CheckpointManager {
     if (fs.existsSync(file)) {
       try {
         const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-        logger.info(`🔄 Resuming session for ${userId} at Chapter ${data.completedChapters + 1}`);
+        logger.info(`🔄 Resuming at Chapter ${data.completedChapters + 1}`);
         return data;
       } catch (e) {
-        logger.error('Corrupt state file, starting fresh.');
+        logger.warn('Corrupt state file, starting fresh');
       }
     }
     return null;
@@ -96,53 +94,38 @@ class CheckpointManager {
     fs.writeFileSync(this.getPath(userId), JSON.stringify(data, null, 2));
   }
 
-  // ADD THIS MISSING FUNCTION BELOW
   static clear(userId) {
     const file = this.getPath(userId);
-    if (fs.existsSync(file)) {
-      try {
-        fs.unlinkSync(file);
-        logger.info(`🧹 Cleaned up checkpoint state for ${userId}`);
-      } catch (e) {
-        logger.warn(`Failed to delete checkpoint file: ${e.message}`);
-      }
-    }
+    if (fs.existsSync(file)) fs.unlinkSync(file);
   }
 }
 
-// ==================== UTILS & FORMATTING ====================
-function generateMeshGradient() {
-  const h1 = Math.floor(Math.random() * 360);
-  const h2 = (h1 + 60) % 360;
-  const h3 = (h1 + 180) % 360;
-  return `background-color: hsl(${h1}, 60%, 50%);
-          background-image: 
-            radial-gradient(at 40% 20%, hsla(${h2}, 100%, 74%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 0%, hsla(${h3}, 100%, 56%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 50%, hsla(${h2}, 100%, 93%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 50%, hsla(${h3}, 100%, 76%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 100%, hsla(${h1}, 100%, 78%, 1) 0px, transparent 50%),
-            radial-gradient(at 80% 100%, hsla(${h2}, 100%, 56%, 1) 0px, transparent 50%),
-            radial-gradient(at 0% 0%, hsla(${h3}, 100%, 78%, 1) 0px, transparent 50%);`;
-}
-
+// ==================== TEXT PROCESSING ====================
 function cleanUpAIText(text) {
   if (!text) return '';
-  let clean = text
+  return text
     .replace(/^(?:Hi|Hello|Hey|Sure|Here).*?(\n\n|$)/gis, '')
     .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '')
     .replace(/^\s*Table of Contents\s*$/gim, '')
-    .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2') // Fix "123meters" -> "123 meters"
-    .replace(/\\([[\]{}()])/g, '$1') // Fix escaped brackets
+    .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/[\u2013\u2014]/g, '-')
     .trim();
-  return clean;
 }
 
 function formatMath(content) {
-  // Simple LaTeX fixer
+  const tables = [], codeBlocks = [];
+  content = content.replace(/(\|.+\|[\s]*\n\|[-:\s|]+\|[\s]*\n(?:\|.*\|[\s]*\n?)*)/g, tbl => {
+    tables.push(tbl);
+    return `__TABLE__${tables.length - 1}__`;
+  });
+  content = content.replace(/```[\w]*\n([\s\S]*?)```/g, match => {
+    codeBlocks.push(match);
+    return `__CODE__${codeBlocks.length - 1}__`;
+  });
   content = content.replace(/^\\\[(.+)\\\]$/gm, '$$$1$$');
-  content = content.replace(/\\wedge/g, '^');
+  content = content.replace(/__TABLE__(\d+)__/g, (_, i) => tables[i]);
+  content = content.replace(/__CODE__(\d+)__/g, (_, i) => codeBlocks[i]);
   return content;
 }
 
@@ -152,12 +135,21 @@ marked.use({
     blockquote(quote) {
       const text = typeof quote === 'string' ? quote : (quote.text || '');
       const raw = text.replace(/<p>|<\/p>|\n/g, '').trim();
-      if (raw.includes('[!PRO-TIP]')) return `<div class="callout callout-tip"><strong>💡 Pro Tip</strong>${text.replace('[!PRO-TIP]', '')}</div>`;
-      if (raw.includes('[!WARNING]')) return `<div class="callout callout-warning"><strong>⚠️ Caution</strong>${text.replace('[!WARNING]', '')}</div>`;
-      return `<blockquote class="standard-quote">${text}</blockquote>`;
+      
+      if (raw.includes('[!PRO-TIP]')) {
+        return `<div class="callout callout-tip"><strong>💡 Expert Tip</strong>${text.replace('[!PRO-TIP]', '')}</div>`;
+      }
+      if (raw.includes('[!WARNING]')) {
+        return `<div class="callout callout-warning"><strong>⚠️ Critical Warning</strong>${text.replace('[!WARNING]', '')}</div>`;
+      }
+      if (raw.includes('[!NOTE]')) {
+        return `<div class="callout callout-note"><strong>📌 Key Concept</strong>${text.replace('[!NOTE]', '')}</div>`;
+      }
+      return `<blockquote>${text}</blockquote>`;
     }
   },
-  gfm: true
+  gfm: true,
+  breaks: true
 });
 
 // ==================== DIAGRAMS ====================
@@ -165,6 +157,7 @@ function repairMermaidSyntax(code) {
   return code
     .replace(/^mermaid\s*\n/i, '')
     .replace(/\[([^\]]*?\(.*?\)[^\]]*?)\]/g, (m, c) => c.startsWith('"') ? m : `["${c.replace(/"/g, "'")}"]`)
+    .replace(/-->;\s*$/gm, '-->')
     .replace(/-->\s*$/gm, '--> EndNode[End]')
     .trim();
 }
@@ -172,16 +165,15 @@ function repairMermaidSyntax(code) {
 async function formatDiagrams(content) {
   const figures = [];
   const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
-  let i = 0;
   
   const matches = [...content.matchAll(diagramRegex)];
-  
+  logger.info(`🔍 Found ${matches.length} diagrams`);
+
   for (let match of matches) {
     const fullMatch = match[0];
     const code = repairMermaidSyntax(match[1]);
-    const caption = match[2] || 'Illustration of concept';
-    const figNum = i + 1;
-    i++;
+    const caption = match[2] || 'Illustration';
+    const figNum = figures.length + 1;
 
     try {
       const res = await fetch('https://kroki.io/mermaid/svg', {
@@ -190,14 +182,13 @@ async function formatDiagrams(content) {
         headers: { 'Content-Type': 'text/plain' }
       });
       if (res.ok) {
-        const svg = await res.text();
-        const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+        const base64 = `data:image/svg+xml;base64,${Buffer.from(await res.text()).toString('base64')}`;
         figures.push({ base64, caption, figNum });
         content = content.replace(fullMatch, `__FIGURE__${figures.length - 1}__`);
       } else {
-        content = content.replace(fullMatch, ''); // Remove failed diagrams
+        content = content.replace(fullMatch, '');
       }
-    } catch (e) {
+    } catch {
       content = content.replace(fullMatch, '');
     }
   }
@@ -220,206 +211,418 @@ function parseTOC(tocContent) {
     }
   }
   if (current) chapters.push(current);
-  return chapters.filter(c => c.subtopics.length >= 2).slice(0, 10);
+  return chapters.filter(c => c.subtopics.length >= 3).slice(0, 10);
 }
 
 function generateFallbackTOC(bookTopic) {
   return { 
-    raw: "", 
     parsed: Array(10).fill(0).map((_, i) => ({
-      title: `Essential Concept ${i+1} of ${bookTopic}`,
-      subtopics: ["Core Definition", "Real World Application", "Advanced nuance"]
+      title: `Core Principle ${i+1}: Deep Dive into ${bookTopic}`,
+      subtopics: ["Theoretical Foundation", "Practical Implementation", "Advanced Considerations"]
     }))
   };
 }
 
-// ==================== AI CORE ====================
-async function askAI(prompt, userId, contextName, options = {}) {
-  await userRateLimiter.wait(userId);
-  logger.info(`🤖 AI Request: ${contextName}`);
+// ==================== AI GENERATORS ====================
 
+async function askAI(prompt, userId, context, options = {}) {
+  await userRateLimiter.wait(userId);
+  
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const result = await ensureCerebras().chat.completions.create({
         model: MODEL_NAME,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: options.genOptions?.maxOutputTokens || 4000,
-        temperature: options.genOptions?.temperature || 0.7,
-        stream: false
+        max_tokens: options.max_tokens || 4000,
+        temperature: options.temperature || 0.4,
       });
       
-      let reply = result.choices[0].message.content || '';
-      if (reply.length < 50) throw new Error("Response too short");
-      if (options.minLength && reply.length < options.minLength) throw new Error("Response below min length");
-      
+      const reply = result.choices[0]?.message?.content || '';
+      if (reply.length < (options.minLength || 100)) throw new Error("Response too short");
       return reply;
     } catch (e) {
-      logger.warn(`AI Attempt ${attempt+1} failed: ${e.message}`);
+      logger.warn(`AI attempt ${attempt+1} failed: ${e.message}`);
+      if (attempt === 2) throw e;
       await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
     }
   }
-  throw new Error("AI Generation Failed");
 }
 
-// ==================== GENERATORS ====================
-
-// 1. THE ARCHITECT: Generates a high-quality Curriculum
 async function generateTOC(bookTopic, userId) {
-  const prompt = `Act as a University Dean designing a curriculum for: "${bookTopic}".
-  TARGET: Create a Table of Contents for a comprehensive, deep-dive textbook.
-  RULES:
-  - Generate EXACTLY 10 Chapters.
-  - Progression: Foundations -> Deep Technical Concepts -> Advanced Systems -> Real World Mastery.
-  - Format: "Chapter X: Title"
-  - Under each, list 4-6 specific subtopics (indented with "- ").
-  - STRICTLY LIMIT SCOPE to "${bookTopic}". Do not drift into unrelated fields.
-  - NO conversational text.`;
-  
+  const prompt = `You are a Distinguished Professor creating a university-level textbook on "${bookTopic}".
+
+CURRICULUM DESIGN PRINCIPLES:
+1. **Progressive Complexity**: Foundations → Core Theory → Advanced Applications → Expert Mastery
+2. **Prerequisite Chaining**: Each chapter builds directly on the previous
+3. **Depth Over Breadth**: 10 chapters that go DEEP, not 20 shallow ones
+
+OUTPUT FORMAT (STRICT):
+Chapter 1: [Foundation Title]
+   - Subtopic 1: Core definition with mathematical/formal rigor
+   - Subtopic 2: Historical development and context
+   - Subtopic 3: Fundamental mechanisms/algorithms
+   - Subtopic 4: Simple applications
+
+Chapter 2: [Next Level Title]
+   - Subtopic 1: Builds on Ch1's mechanisms
+   - Subtopic 2: Intermediate theory
+   - Subtopic 3: Complex applications
+   - Subtopic 4: Edge cases and limitations
+
+... (Continue for all 10 chapters)
+
+REQUIREMENTS:
+- EXACTLY 10 chapters
+- Subtopics must be SPECIFIC and actionable
+- NO generic phrases like "Understanding Basics"
+- Each subtopic should map to a 3-5 minute lecture segment
+
+Generate the complete TOC.`;
+
   try {
-    const raw = await askAI(prompt, userId, "TOC Gen", { genOptions: { maxOutputTokens: 1500, temperature: 0.5 }});
+    const raw = await askAI(prompt, userId, "TOC", { max_tokens: 1200 });
     const parsed = parseTOC(raw);
     if (parsed.length >= 8) return { raw, parsed };
-  } catch (e) { logger.error(e); }
-  
+  } catch (e) {
+    logger.error(`TOC generation failed: ${e.message}`);
+  }
   return generateFallbackTOC(bookTopic);
 }
 
-// 2. THE ANALYST: Extracts Metadata (Separate call to avoid JSON breakage)
-async function generateMetadata(chapterContent, bookTopic, userId) {
-  const prompt = `Analyze this chapter text about "${bookTopic}".
-  TEXT: ${chapterContent.substring(0, 15000)}...
-  
-  Output valid JSON only:
-  {
-    "summary": "A 100-word detailed summary of the key definitions and concepts taught.",
-    "glossary": [{"term": "Term", "def": "Definition"}],
-    "quiz": [{"q": "Question?", "options": ["A", "B", "C", "D"], "correct": "A", "explanation": "Why"}]
-  }`;
-
-  try {
-    const raw = await askAI(prompt, userId, "Metadata Gen", { genOptions: { maxOutputTokens: 1000, temperature: 0.1 }});
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-  } catch (e) {
-    return { summary: "Content generated successfully.", glossary: [], quiz: [] };
-  }
-}
-
-// 3. THE PROFESSOR: Generates Deep Content
-async function generateChapter(bookTopic, chapterNumber, chapterInfo, globalContext, userId) {
+async function generateChapter(bookTopic, chNum, chapterInfo, globalContext, userId) {
   const subtopics = chapterInfo.subtopics.map(s => `- ${s}`).join('\n');
   
-  const prompt = `You are an expert Professor writing Chapter ${chapterNumber}: "${chapterInfo.title}" for a textbook on "${bookTopic}".
+  const prompt = `You are writing Chapter ${chNum}: "${chapterInfo.title}" for a textbook on "${bookTopic}".
 
-  CONTEXT (What students learned so far):
-  ${globalContext || "This is the first chapter. Set the foundation."}
+STUDENT'S PRIOR KNOWLEDGE:
+${globalContext || "This is the foundation chapter. Assume intelligent but uninformed reader."}
 
-  YOUR TASK:
-  Teach these specific subtopics in extreme depth:
-  ${subtopics}
+PEDAGOGICAL FRAMEWORK (Follow EXACTLY):
+For EACH subtopic, use this structure:
 
-  STRICT WRITING RULES:
-  1. **Structure**:
-     - **Intuition**: Explain the concept simply (Mental Model).
-     - **Deep Dive**: Technical breakdown, logic, and mechanics.
-     - **Application**: Real-world use case.
-     - **Pitfalls**: Common mistakes.
-  2. **Constraint**: Do NOT write about anything outside the subtopics list. Stay focused.
-  3. **Tone**: Authoritative, educational, rigorous but accessible (like the Feynman Lectures).
-  4. **Formatting**: Use Markdown headers (##, ###), bold key terms, and use [!PRO-TIP] for insights.
-  5. **Visuals**: If a concept is structural, include a Mermaid diagram block.
-  6. **Length**: Minimum 1500 words.
+### [Subtopic Title]
 
-  Output ONLY the chapter content.`;
+**Intuition (Mental Model):** 
+Explain the concept as if teaching a smart 15-year-old. Use analogies, metaphors, and simple language. This section is NON-NEGOTIABLE.
 
-  const content = await askAI(prompt, userId, `Chapter ${chapterNumber}`, {
-    minLength: 2000,
-    genOptions: { maxOutputTokens: 6000, temperature: 0.4 } // Lower temp for adherence to instructions
-  });
+**Formal Definition:**
+Provide the rigorous mathematical, technical, or formal definition. Use LaTeX for equations: $$E=mc^2$$
 
-  return cleanUpAIText(content);
+**Mechanics (How It Works):**
+Detail the step-by-step mechanisms, algorithms, or processes. Include code snippets if applicable.
+
+**Real-World Application:**
+A concrete example from industry, science, or technology. Name specific companies, tools, or research papers.
+
+**Common Pitfalls & Edge Cases:**
+What mistakes do experts make? What breaks this concept? Include 1-2 "gotchas".
+
+**[!PRO-TIP]**
+Insert one expert-level insight that accelerates mastery.
+
+SUBTOPICS TO COVER:
+${subtopics}
+
+WRITING CONSTRAINTS:
+- Minimum 2000 words for this chapter
+- Use ### for subtopic headers
+- Use **bold** for key terms
+- Include Mermaid diagrams for complex relationships
+- NEVER write "This chapter covers" or "In conclusion"
+- Teach AS YOU WRITE, don't summarize
+
+OUTPUT ONLY THE CHAPTER CONTENT.`;
+
+  return cleanUpAIText(await askAI(prompt, userId, `Chapter ${chNum}`, { 
+    max_tokens: 6000,
+    minLength: 1800 
+  }));
 }
 
 async function generateConclusion(bookTopic, chapterInfos, userId) {
-  const prompt = `Write a powerful conclusion for a book about "${bookTopic}". 
-  Summarize the journey through these chapters: ${chapterInfos.map(c => c.title).join(', ')}.
-  Encourage the reader to apply their new expert knowledge.`;
-  return cleanUpAIText(await askAI(prompt, userId, "Conclusion", { minLength: 1000 }));
+  const prompt = `Write the final chapter of "${bookTopic}".
+
+SUMMARIZE THE INTELLECTUAL JOURNEY:
+1. Recap the core principles from each major section
+2. Synthesize how they interconnect to create expert understanding
+3. Pose 2-3 unsolved problems or future directions in the field
+4. Challenge the reader to apply their knowledge to a real project
+
+Tone: Inspiring, authoritative, like a commencement address from a Nobel laureate.
+
+Length: 800-1000 words.`;
+
+  return cleanUpAIText(await askAI(prompt, userId, "Conclusion", { max_tokens: 2000 }));
 }
 
-// ==================== PDF BUILDER ====================
+// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapterInfos) {
   const meshBg = generateMeshGradient();
   
-  const tocHTML = `<div class="chapter-break"></div><h1>Table of Contents</h1><div class="toc-list">
-    ${chapterInfos.map((ch, i) => `<div class="toc-chapter"><strong>${i+1}. ${ch.title}</strong>
-    <div class="toc-subtopics">${ch.subtopics.map(s => `<span class="toc-sub">• ${s}</span>`).join(' ')}</div></div>`).join('')}
-  </div><div class="chapter-break"></div>`;
+  const tocHTML = `
+    <div class="chapter-break"></div>
+    <h1>📚 Table of Contents</h1>
+    <div class="toc-container">
+      ${chapterInfos.map((ch, i) => `
+        <div class="toc-chapter">
+          <div class="toc-title">${i + 1}. ${ch.title}</div>
+          <div class="toc-subtopics">
+            ${ch.subtopics.map(s => `<span class="toc-sub">• ${s}</span>`).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="chapter-break"></div>
+  `;
 
-  const glossaryHTML = glossary?.length ? `<div class="chapter-break"></div><h1>Glossary</h1><dl class="glossary-list">
-    ${glossary.map(g => `<dt>${g.term}</dt><dd>${g.def}</dd>`).join('')}</dl>` : '';
+  const glossaryHTML = glossary?.length ? `
+    <div class="chapter-break"></div>
+    <h1>🎓 Technical Glossary</h1>
+    <dl class="glossary-list">
+      ${glossary.sort((a,b) => a.term.localeCompare(b.term)).map(item => `
+        <dt>${item.term}</dt>
+        <dd>${item.def}</dd>
+      `).join('')}
+    </dl>
+  ` : '';
 
   const finalContent = content.replace(/__FIGURE__(\d+)__/g, (_, i) => {
-    const fig = figures[i];
-    return fig ? `<figure style="text-align: center; margin: 2em 0;"><img src="${fig.base64}" style="max-width:90%; border:1px solid #ddd; border-radius:8px;"><figcaption>Figure ${fig.figNum}: ${fig.caption}</figcaption></figure>` : '';
+    const fig = figures[parseInt(i)];
+    if (!fig) return '';
+    return `
+      <figure style="text-align: center; margin: 2.5em 0;">
+        <img src="${fig.base64}" alt="${fig.caption}" style="max-width: 90%; height: auto; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 6px 12px rgba(0,0,0,0.1);">
+        <figcaption style="margin-top: 0.8em; font-style: italic; color: #6b7280; font-size: 0.95em;">Figure ${fig.figNum}: ${fig.caption}</figcaption>
+      </figure>
+    `;
   });
 
   return `<!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>${bookTitle}</title>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-    <style>
-      @page { margin: 20mm; size: A4; }
-      body { font-family: 'Georgia', serif; line-height: 1.6; color: #333; }
-      h1, h2, h3 { font-family: 'Helvetica', sans-serif; color: #111; }
-      h1 { border-bottom: 3px solid #667eea; padding-bottom: 10px; page-break-before: always; }
-      .cover-page { height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; color: white; ${meshBg} }
-      .cover-title { font-size: 48px; font-weight: bold; margin-bottom: 20px; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
-      .callout { padding: 15px; border-left: 5px solid; background: #f9f9f9; margin: 20px 0; }
-      .callout-tip { border-color: #2ecc71; background: #e8f8f5; }
-      .callout-warning { border-color: #e74c3c; background: #fdedec; }
-      .toc-chapter { margin-bottom: 15px; }
-      .toc-sub { font-size: 0.85em; color: #666; margin-right: 10px; }
-      .glossary-list dt { font-weight: bold; color: #2c3e50; margin-top: 10px; }
-      img { max-width: 100%; }
-      pre { background: #2d2d2d; color: #ccc; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-    </style>
-  </head>
-  <body>
-    <div class="cover-page">
-      <h1 class="cover-title" style="border:none;">${bookTitle}</h1>
-      <p>Generated by BookGen AI</p>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${bookTitle} - Expert Textbook</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  
+  <style>
+    @page { margin: 25mm 20mm; size: A4; }
+    .cover-page { page: cover; }
+    @page cover { margin: 0; }
+    
+    body { 
+      font-family: 'Crimson Text', serif; 
+      font-size: 11.5pt; 
+      line-height: 1.7; 
+      color: #1a1a1a; 
+      text-align: justify; 
+      hyphens: auto;
+      background: white;
+    }
+    
+    .cover-page {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      color: white;
+      margin: -25mm -20mm;
+      padding: 20mm;
+      ${meshBg}
+    }
+    
+    .cover-title {
+      font-family: 'Inter', sans-serif;
+      font-size: 3em;
+      font-weight: 700;
+      margin-bottom: 0.3em;
+      text-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      border: none !important;
+    }
+    
+    .cover-subtitle {
+      font-family: 'Inter', sans-serif;
+      font-size: 1.2em;
+      font-weight: 300;
+      opacity: 0.9;
+      margin-bottom: 2em;
+    }
+    
+    h1, h2, h3 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      page-break-after: avoid;
+    }
+    
+    h1 {
+      font-size: 2.2em;
+      border-bottom: 4px solid #667eea;
+      padding-bottom: 15px;
+      margin-top: 2em;
+      color: #111;
+    }
+    
+    h2 {
+      font-size: 1.6em;
+      margin-top: 1.8em;
+      margin-bottom: 0.8em;
+      color: #222;
+    }
+    
+    h3 {
+      font-size: 1.3em;
+      margin-top: 1.5em;
+      color: #333;
+      font-weight: 600;
+    }
+    
+    .toc-container {
+      margin: 2em 0;
+    }
+    
+    .toc-chapter {
+      margin-bottom: 2em;
+    }
+    
+    .toc-title {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 1.1em;
+      margin-bottom: 0.5em;
+    }
+    
+    .toc-subtopics {
+      margin-left: 1.5em;
+      font-size: 0.9em;
+      color: #555;
+      line-height: 1.4;
+    }
+    
+    .callout {
+      padding: 1.2em;
+      margin: 1.5em 0;
+      border-left: 5px solid;
+      border-radius: 6px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9em;
+      page-break-inside: avoid;
+    }
+    
+    .callout-tip { border-color: #10b981; background: #ecfdf5; color: #065f46; }
+    .callout-warning { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
+    .callout-note { border-color: #3b82f6; background: #eff6ff; color: #1e40af; }
+    
+    .glossary-list dt {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      color: #1e40af;
+      margin-top: 1.2em;
+    }
+    
+    .glossary-list dd {
+      margin-left: 0;
+      margin-bottom: 0.5em;
+      color: #374151;
+    }
+    
+    code {
+      background: #f3f4f6;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9em;
+      color: #1e40af;
+    }
+    
+    pre {
+      background: #1f2937;
+      color: #e5e7eb;
+      padding: 1.2em;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1.5em 0;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5em 0;
+    }
+    
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 10px;
+      text-align: left;
+    }
+    
+    th {
+      background: #f9fafb;
+      font-weight: 600;
+    }
+    
+    .disclaimer-footer {
+      margin-top: 4em;
+      padding-top: 2em;
+      border-top: 2px solid #e5e7eb;
+      font-size: 0.8em;
+      color: #6b7280;
+      text-align: center;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="cover-page">
+    <h1 class="cover-title">${bookTitle}</h1>
+    <p class="cover-subtitle">An Expert-Level Textbook</p>
+    <div style="font-size: 0.9em; opacity: 0.8;">
+      Generated by AI Assistant<br>
+      ${new Date().toLocaleDateString()}
     </div>
-    ${tocHTML}
-    <div class="content">${marked.parse(finalContent)}</div>
-    ${glossaryHTML}
-  </body>
-  </html>`;
+  </div>
+  ${tocHTML}
+  <div class="chapter-content">${marked.parse(finalContent)}</div>
+  ${glossaryHTML}
+  <div class="disclaimer-footer">
+    ⚠️ This textbook was generated by AI. While designed for accuracy and depth, please verify critical information independently.
+  </div>
+  <script>document.addEventListener('DOMContentLoaded', () => { Prism.highlightAll(); });</script>
+</body>
+</html>`;
 }
 
-// ==================== MAIN EXPORT ====================
+// ==================== MAIN GENERATOR ====================
 export async function generateBookMedd(rawTopic, userId) {
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   
-  // Load State or Initialize
-  let state = CheckpointManager.load(safeUserId) || {
+  const state = CheckpointManager.load(safeUserId) || {
     bookTopic,
     chapterInfos: [],
     completedChapters: 0,
     generatedFiles: [],
     glossaryAccumulator: [],
-    runningContext: "", // STORES THE MEMORY OF THE BOOK
+    runningContext: "",
     tocGenerated: false
   };
 
-  logger.info(`=== 🚀 Starting Book: "${bookTopic}" ===`);
+  logger.info(`=== 🚀 Generating Expert Textbook: "${bookTopic}" ===`);
 
   try {
-    // Step 1: Syllabus
+    // Step 1: Generate Syllabus
     if (!state.tocGenerated) {
       const { parsed } = await generateTOC(bookTopic, safeUserId);
       state.chapterInfos = parsed;
@@ -427,73 +630,86 @@ export async function generateBookMedd(rawTopic, userId) {
       CheckpointManager.save(safeUserId, state);
     }
 
-    // Step 2: Content Loop
+    // Step 2: Generate Chapters
     for (let i = state.completedChapters; i < state.chapterInfos.length; i++) {
       const info = state.chapterInfos[i];
       const chNum = i + 1;
-      logger.info(`📝 Writing Ch ${chNum}: ${info.title}`);
-      
-      // A. Write Content (Using Context)
+      logger.info(`📝 Writing Chapter ${chNum}: ${info.title}`);
+
+      // Generate deep content
       const content = await generateChapter(bookTopic, chNum, info, state.runningContext, safeUserId);
       
-      // B. Analyze Content (Extract Metadata)
-      const metadata = await generateMetadata(content, bookTopic, safeUserId);
+      // Update running context
+      const summary = `Chapter ${chNum}: ${info.title} - Key concepts mastered: ${info.subtopics.slice(0, 2).join(', ')}`;
+      state.runningContext += `\n${summary}`;
       
-      // C. Save & Update Context
-      const fileData = `\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${content}\n\n---\n`;
-      state.generatedFiles.push(fileData);
-      
-      if (metadata?.glossary) state.glossaryAccumulator.push(...metadata.glossary);
-      
-      // UPDATE RUNNING CONTEXT (The Critical Link)
-      const summary = metadata?.summary || "Content covered.";
-      state.runningContext += `\n[Chapter ${chNum} Summary]: ${summary}\n`;
-      
+      state.generatedFiles.push(`\n<div class="chapter-break"></div>\n\n# Chapter ${chNum}: ${info.title}\n\n${content}\n\n---\n`);
       state.completedChapters = chNum;
       CheckpointManager.save(safeUserId, state);
     }
 
-    // Step 3: Conclusion & Finalize
+    // Step 3: Conclusion
     const conclusion = await generateConclusion(bookTopic, state.chapterInfos, safeUserId);
     state.generatedFiles.push(`\n<div class="chapter-break"></div>\n\n# Conclusion\n\n${conclusion}\n`);
 
-    // Step 4: PDF
-    logger.info('📚 Assembling PDF...');
+    // Step 4: Generate PDF
+    logger.info('📚 Assembling final PDF...');
     const fullText = state.generatedFiles.join('\n');
     const { content: processedText, figures } = await formatDiagrams(formatMath(fullText));
-    
     const html = buildEnhancedHTML(processedText, bookTopic, figures, state.glossaryAccumulator, [], state.chapterInfos);
-    
-    // Nutrient API Call
+
     const form = new FormData();
     form.append('instructions', JSON.stringify({
       parts: [{ html: "index.html" }],
-      output: { format: "pdf", pdf: { printBackground: true, margin: { top: "20mm", bottom: "20mm" } } }
+      output: {
+        format: "pdf",
+        pdf: {
+          margin: { top: "20mm", bottom: "20mm", left: "20mm", right: "20mm" },
+          printBackground: true
+        }
+      }
     }));
     form.append('index.html', Buffer.from(html), { filename: 'index.html', contentType: 'text/html' });
 
-    const response = await fetch('https://api.nutrient.io/build', {
+    const response = await fetch('https://api.nutrient.io/v1/build', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${NUTRIENT_API_KEY}` },
       body: form
     });
-    
+
     if (!response.ok) throw new Error(await response.text());
     
-    const pdfPath = path.join(OUTPUT_DIR, `Book_${safeUserId}.pdf`);
-    fs.writeFileSync(pdfPath, await response.buffer());
+    const pdfPath = path.join(OUTPUT_DIR, `ExpertBook_${safeUserId}.pdf`);
+    fs.writeFileSync(pdfPath, Buffer.from(await response.arrayBuffer()));
     
-    logger.info(`✅ DONE: ${pdfPath}`);
-    CheckpointManager.clear(safeUserId); // Clean up state on success
+    logger.info(`✅ SUCCESS: ${pdfPath}`);
+    CheckpointManager.clear(safeUserId);
     return pdfPath;
 
   } catch (e) {
-    logger.error(`❌ Fatal Error: ${e.message}`);
+    logger.error(`❌ FATAL ERROR: ${e.message}`);
     throw e;
   }
 }
 
+// ==================== QUEUE SYSTEM ====================
+const bookQueue = async.queue(async (task, callback) => {
+  try {
+    const result = await generateBookMedd(task.bookTopic, task.userId);
+    callback(null, result);
+  } catch (error) {
+    callback(error);
+  }
+}, 1);
 
+export function queueBookGeneration(bookTopic, userId) {
+  return new Promise((resolve, reject) => {
+    bookQueue.push({ bookTopic, userId }, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
 
 
 
