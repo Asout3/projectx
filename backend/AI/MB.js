@@ -1,4 +1,4 @@
-// AI/MB.js – Expert-Grade Knowledge Generator
+// AI/MB.js – Complete Expert Knowledge Generator
 import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
@@ -18,6 +18,7 @@ const __dirname = path.dirname(__filename);
 if (!process.env.RAILWAY_ENVIRONMENT) {
   dotenv.config({ path: path.join(__dirname, '../backend/.env') });
 }
+
 const CEREBRAS_API_KEY = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
 
@@ -42,7 +43,7 @@ class RateLimiter {
   }
 }
 
-const userRateLimiter = new RateLimiter(25); // Cerebras: 30 req/min
+const userRateLimiter = new RateLimiter(25);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const STATE_DIR = path.join(__dirname, 'states');
@@ -51,9 +52,9 @@ fs.mkdirSync(HISTORY_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(STATE_DIR, { recursive: true });
 
-// Logger
+// Reduced logging for production
 const logger = winston.createLogger({
-  level: 'info',
+  level: 'warn', // Change to 'info' for debugging
   format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
   transports: [
     new winston.transports.File({ filename: 'bookgen.log' }),
@@ -371,7 +372,6 @@ function generateMeshGradient() {
             radial-gradient(at 0% 0%, hsla(${h3}, 100%, 78%, 1) 0px, transparent 50%);`;
 }
 
-// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapterInfos) {
   const meshBg = generateMeshGradient();
   
@@ -622,6 +622,7 @@ function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapt
 
 // ==================== MAIN GENERATOR ====================
 export async function generateBookMedd(rawTopic, userId) {
+  // FIX: Limit topic length to prevent insane titles
   const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim().slice(0, 100);
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   
@@ -672,7 +673,7 @@ export async function generateBookMedd(rawTopic, userId) {
     logger.info('📚 Assembling final PDF...');
     const fullText = state.generatedFiles.join('\n');
     const { content: processedText, figures } = await formatDiagrams(formatMath(fullText));
-    const html = buildEnhancedHTML(processedText, bookTopic, figures, state.glossaryAccumulator, [], state.chapterInfos);
+    const html = buildEnhancedHTML(processedText, bookTitle, figures, state.glossary, [], state.chapterInfos);
 
     const form = new FormData();
     form.append('instructions', JSON.stringify({
@@ -726,9 +727,6 @@ export function queueBookGeneration(bookTopic, userId) {
     });
   });
 }
-
-
-
 
 
 
