@@ -356,6 +356,22 @@ Length: 800-1000 words.`;
 }
 
 // ==================== PDF GENERATION ====================
+function generateMeshGradient() {
+  const h1 = Math.floor(Math.random() * 360);
+  const h2 = (h1 + 60) % 360;
+  const h3 = (h1 + 180) % 360;
+  return `background-color: hsl(${h1}, 60%, 50%);
+          background-image: 
+            radial-gradient(at 40% 20%, hsla(${h2}, 100%, 74%, 1) 0px, transparent 50%),
+            radial-gradient(at 80% 0%, hsla(${h3}, 100%, 56%, 1) 0px, transparent 50%),
+            radial-gradient(at 0% 50%, hsla(${h2}, 100%, 93%, 1) 0px, transparent 50%),
+            radial-gradient(at 80% 50%, hsla(${h3}, 100%, 76%, 1) 0px, transparent 50%),
+            radial-gradient(at 0% 100%, hsla(${h1}, 100%, 78%, 1) 0px, transparent 50%),
+            radial-gradient(at 80% 100%, hsla(${h2}, 100%, 56%, 1) 0px, transparent 50%),
+            radial-gradient(at 0% 0%, hsla(${h3}, 100%, 78%, 1) 0px, transparent 50%);`;
+}
+
+// ==================== PDF GENERATION ====================
 function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapterInfos) {
   const meshBg = generateMeshGradient();
   
@@ -606,7 +622,7 @@ function buildEnhancedHTML(content, bookTitle, figures, glossary, quizzes, chapt
 
 // ==================== MAIN GENERATOR ====================
 export async function generateBookMedd(rawTopic, userId) {
-  const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim();
+  const bookTopic = rawTopic.replace(/^(generate|create|write)( me)? (a book )?(about )?/i, '').trim().slice(0, 100);
   const safeUserId = `${userId}-${bookTopic.replace(/\s+/g, '_').slice(0, 30)}`;
   
   const state = CheckpointManager.load(safeUserId) || {
