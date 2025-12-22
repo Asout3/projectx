@@ -95,6 +95,19 @@ class CheckpointManager {
   static save(userId, data) {
     fs.writeFileSync(this.getPath(userId), JSON.stringify(data, null, 2));
   }
+
+  // ADD THIS MISSING FUNCTION BELOW
+  static clear(userId) {
+    const file = this.getPath(userId);
+    if (fs.existsSync(file)) {
+      try {
+        fs.unlinkSync(file);
+        logger.info(`🧹 Cleaned up checkpoint state for ${userId}`);
+      } catch (e) {
+        logger.warn(`Failed to delete checkpoint file: ${e.message}`);
+      }
+    }
+  }
 }
 
 // ==================== UTILS & FORMATTING ====================
