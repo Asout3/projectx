@@ -231,7 +231,7 @@ async function askAI(prompt, userId, context, options = {}) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const result = await ensureCerebras().chat.completions.create({
-        model: MODEL_NAME,
+        model: 'gpt-oss-120b',
         messages: [{ role: "user", content: prompt }],
         max_tokens: options.max_tokens || 4000,
         temperature: options.temperature || 0.4,
