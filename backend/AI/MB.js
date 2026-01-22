@@ -45,7 +45,7 @@ const userRateLimiter = new RateLimiter(30);
 const HISTORY_DIR = path.join(__dirname, 'history');
 const OUTPUT_DIR = path.join(__dirname, '../pdfs');
 const CHAPTER_PREFIX = 'chapter';
-const MODEL_NAME = 'llama3.1-70b'; // Ensure this is available on Cerebras
+const MODEL_NAME = 'gpt-oss-120b'; // Ensure this is available on Cerebras
 // HARDCODED KEY AS REQUESTED FOR THIS VERSION
 const API_KEY = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
 const NUTRIENT_API_KEY = process.env.NUTRIENT_API_KEY;
