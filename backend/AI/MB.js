@@ -17,322 +17,241 @@ const __dirname = path.dirname(__filename);
 
 // ==================== CONFIGURATION ====================
 const CONFIG = {
-  concurrency: 4, // Generate 4 chapters at once (Speed Optimization)
-  model: 'gpt-oss-120b', // High intelligence model
+  concurrency: 4,
+  model: 'gpt-oss-120b',
   dirs: {
     history: path.join(__dirname, 'history'),
     output: path.join(__dirname, '../pdfs')
   },
-  nutrientKey: process.env.NUTRIENT_API_KEY
+  nutrientKey: process.env.NUTRIENT_API_KEY // Ensure this is in your .env
 };
 
-// ==================== UTILITIES ====================
-class RateLimiter {
-  constructor(requestsPerMinute) {
-    this.limit = requestsPerMinute;
-    this.users = new Map();
-  }
-
-  async wait(userId) {
-    const now = Date.now();
-    if (!this.users.has(userId)) this.users.set(userId, []);
-    
-    const userRequests = this.users.get(userId);
-    const recent = userRequests.filter(t => now - t < 60000);
-    this.users.set(userId, recent);
-
-    while (recent.length >= this.limit) {
-      const oldest = recent[0];
-      const waitTime = 60000 - (now - oldest) + 1000;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-
-    recent.push(now);
-    this.users.set(userId, recent);
-  }
-}
-
-const userRateLimiter = new RateLimiter(30);
-
+// ==================== LOGGING & SETUP ====================
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format.colorize(),
     winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level}]: ${message}`)
   ),
-  transports: [
-    new winston.transports.File({ filename: 'engine.log' }),
-    new winston.transports.Console()
-  ]
+  transports: [new winston.transports.Console()]
 });
 
-fs.mkdirSync(CONFIG.dirs.history, { recursive: true });
-fs.mkdirSync(CONFIG.dirs.output, { recursive: true });
+[CONFIG.dirs.history, CONFIG.dirs.output].forEach(d => fs.mkdirSync(d, { recursive: true }));
 
-// ==================== AI CLIENT ====================
+// ==================== CEREBRAS CLIENT ====================
 let cerebras = null;
 function ensureCerebras() {
   if (cerebras) return cerebras;
-  
-  // SECURITY: Use environment variable. 
-  // If you must hardcode for testing, replace process.env... below, but be careful.
-  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy';
-  
-  if (!key) {
-    throw new Error('CEREBRAS_API_KEY is missing. Check your .env file.');
-  }
+  // Included in plain text per your request
+  const key = 'csk-8jrexx2mcp496w9ypyxtnffmjdn29dch46ydc2jh9jmh2yxy'; 
   cerebras = new Cerebras({ apiKey: key });
   return cerebras;
 }
 
-// ==================== TEXT PROCESSING ====================
+// ==================== MARKED & CODE HIGHLIGHTING ====================
+// We highlight server-side to ensure the PDF engine sees the finished styles
+marked.setOptions({
+  highlight: function(code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+    return hljs.highlight(code, { language }).value;
+  },
+  langPrefix: 'hljs language-',
+  gfm: true,
+  breaks: true
+});
+
+// ==================== UTILITIES ====================
 function cleanUpAIText(text) {
   if (!text) return '';
   return text
-    .replace(/^(?:Hi|Hello|Here is|Sure).*?(\n\n|$)/gis, '')
-    .replace(/<\/?(header|footer|figure|figcaption)[^>]*>/gi, '') // Remove prohibited HTML
-    .replace(/\\([[\]{}()])/g, '$1') // Fix escaped brackets
-    .replace(/\*\s*$/gm, '') // Remove trailing asterisks
+    .replace(/^(?:Hi|Hello|Sure|Here is).*?(\n\n|$)/gis, '')
+    .replace(/\\([[\]{}()])/g, '$1') // Fix escaped math brackets
     .trim();
 }
 
-function formatMath(content) {
-  // Fix LaTeX for MathJax
-  let formatted = content
-    .replace(/^\\\[(.+)\\\]$/gm, '$$$1$$') // Fix display math
-    .replace(/\\wedge/g, '^');
-    
-  return formatted;
-}
-
-// ==================== DIAGRAM ENGINE ====================
-async function formatDiagrams(content) {
-  const figures = [];
-  const diagramRegex = /```mermaid\n([\s\S]*?)```\s*(?:\n\s*\*Figure caption:\s*(.+?)(?=\n\n|\n#|\n$))?/gs;
-  let match;
-  let counter = 0;
-
-  // We replace the mermaid blocks with placeholders and render them
-  // Note: using a loop here instead of matchAll to modify string safely if needed
-  const matches = [...content.matchAll(diagramRegex)];
-  
-  for (const match of matches) {
-    const fullMatch = match[0];
-    const code = match[1].trim();
-    const caption = match[2] ? match[2].trim() : `Figure ${counter + 1}`;
-    
-    try {
-      // Call Kroki for rendering
-      const response = await fetch('https://kroki.io/mermaid/svg', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: code
-      });
-
-      if (response.ok) {
-        const svg = await response.text();
-        const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-        figures.push({ base64, caption, id: counter });
-        
-        // Replace with placeholder
-        content = content.replace(fullMatch, `__FIGURE_${counter}__`);
-        counter++;
-      }
-    } catch (e) {
-      logger.warn(`Diagram render failed: ${e.message}`);
-      // If fail, strip the code block so it doesn't look ugly in PDF
-      content = content.replace(fullMatch, '');
-    }
+async function renderDiagram(code, caption, id) {
+  try {
+    const response = await fetch('https://kroki.io/mermaid/svg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: code.trim()
+    });
+    if (!response.ok) return '';
+    const svg = await response.text();
+    const base64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    return `
+      <figure class="ai-figure">
+        <img src="${base64}" />
+        <figcaption><strong>Figure ${id}:</strong> ${caption}</figcaption>
+      </figure>`;
+  } catch (e) {
+    logger.warn(`Diagram ${id} failed to render: ${e.message}`);
+    return '';
   }
-  return { content, figures };
 }
 
-// ==================== AI CORE (THE BRAIN) ====================
+// ==================== AI CORE ====================
 async function askAI(prompt, userId, options = {}) {
-  await userRateLimiter.wait(userId);
   const client = ensureCerebras();
-
-  let attempts = 0;
-  while (attempts < 3) {
-    try {
-      const completion = await client.chat.completions.create({
-        model: CONFIG.model,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: options.genOptions?.maxOutputTokens || 4000,
-        temperature: options.genOptions?.temperature || 0.5,
-      });
-
-      const reply = completion.choices[0].message.content || '';
-      if (options.minLength && reply.length < options.minLength) {
-        throw new Error(`Response too short (${reply.length} chars)`);
-      }
-      return reply;
-    } catch (e) {
-      attempts++;
-      logger.error(`AI Error (Attempt ${attempts}): ${e.message}`);
-      if (attempts === 3) throw e;
-      await new Promise(r => setTimeout(r, 2000));
-    }
+  try {
+    const completion = await client.chat.completions.create({
+      model: CONFIG.model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: options.maxTokens || 4000,
+      temperature: options.temp || 0.4,
+    });
+    return completion.choices[0].message.content || '';
+  } catch (e) {
+    logger.error(`AI Error: ${e.message}`);
+    throw e;
   }
 }
 
-// ==================== GENERATORS (THE PROFESSOR LOGIC) ====================
+// ==================== GENERATORS ====================
 
-// 1. The Deep Syllabus
-async function generateDeepTOC(bookTopic, userId) {
-  const prompt = `Design a graduate-level textbook curriculum for "${bookTopic}".
-  TARGET: Smart autodidacts (Zero to Mastery).
-  
+async function generateTOC(bookTopic, userId) {
+  const prompt = `Create a 10-chapter curriculum for a definitive masterclass on "${bookTopic}".
   REQUIREMENTS:
-  - Structure into 3 Distinct Parts:
-    1. First Principles & Mental Models (The "Physics" of it)
-    2. Engineering & Implementation (The "Mechanics" of it)
-    3. Advanced Systems & Edge Cases (The "Pro" level)
-  - Output EXACTLY 12 Chapters.
-  - Format: "Chapter X: Title" on a new line.
-  - Under each chapter, list 4 subtopics with indentation ( - Subtopic).
-  - NO markdown preamble, just the TOC.`;
+  - EXACTLY 10 chapters.
+  - Format: "Chapter X: [Title]"
+  - 4 subtopics per chapter using: "- Subtopic"
+  - Structure: Part 1 (Fundamentals), Part 2 (Engineering), Part 3 (Advanced/Future).
+  - No intro text, just the list.`;
 
-  const raw = await askAI(prompt, userId, { genOptions: { temperature: 0.3 } });
-  
-  // Simple parser
+  const raw = await askAI(prompt, userId, { temp: 0.3 });
   const chapters = [];
-  let current = null;
   raw.split('\n').forEach(line => {
-    const chapMatch = line.match(/Chapter \d+: (.+)/i);
-    if (chapMatch) {
-      if (current) chapters.push(current);
-      current = { title: chapMatch[1].trim(), subtopics: [] };
-    } else if (current && line.trim().startsWith('-')) {
-      current.subtopics.push(line.replace(/^[-\s]+/, '').trim());
+    const m = line.match(/Chapter (\d+):\s*(.+)/i);
+    if (m) chapters.push({ title: m[2].trim(), subtopics: [] });
+    else if (chapters.length > 0 && line.trim().startsWith('-')) {
+      chapters[chapters.length - 1].subtopics.push(line.replace('-', '').trim());
     }
   });
-  if (current) chapters.push(current);
-  
-  return { raw: cleanUpAIText(raw), chapters: chapters.slice(0, 12) };
+
+  // Force exactly 10 chapters
+  return { raw, chapters: chapters.slice(0, 10) };
 }
 
-// 2. The Book Bible (Glossary/Context)
-async function generateBookBible(bookTopic, userId) {
-  const prompt = `Create a "Book Bible" for a textbook on "${bookTopic}".
-  List the 10 most critical technical terms, variables, or acronyms used in this field.
-  Provide a 1-sentence strict definition for each to ensure consistency across chapters.
-  Output format: "TERM: Definition"`;
-  
-  return cleanUpAIText(await askAI(prompt, userId, { genOptions: { maxOutputTokens: 1000 } }));
-}
-
-// 3. The Professor Chapter Writer
-async function generateChapter(bookTopic, chNum, info, context, userId) {
+async function generateChapter(bookTopic, chNum, info, tocRaw, userId) {
   const prompt = `
-  ROLE: You are the world's leading expert and professor writing a textbook on "${bookTopic}".
-  CHAPTER: ${chNum}. "${info.title}"
+  ROLE: You are a world-class technical professor writing "${bookTopic}".
+  CHAPTER: ${chNum}: ${info.title}
   
-  CONTEXT & DEFINITIONS (Use strictly):
-  ${context.bible}
+  STRUCTURE:
+  ## 1. The Mental Model (Analogy-driven intuition)
+  ## 2. First Principles (Mathematical/Logical foundations - Use LaTeX $...$ or $$...$$)
+  ## 3. Engineering (Real-world implementation - Include a code block if applicable)
+  ## 4. The "Gotchas" (Critical failure modes and trade-offs)
   
-  CHAPTER SYLLABUS:
+  DIAGRAM: Include one \`\`\`mermaid\`\`\` block to visualize a complex flow.
+  Follow it with "*Figure caption: Description*"
+  
+  Subtopics to cover:
   ${info.subtopics.map(s => `- ${s}`).join('\n')}
-
-  GOAL: Write a rigorous, deep-dive chapter (2000+ words). Move from intuition to engineering to optimization.
   
-  STRICT STRUCTURE:
-  ## 1. Mental Model
-  - Explain the core concept using a vivid analogy.
-  - Why does this exist? What problem does it solve?
-  
-  ## 2. First Principles & Theory
-  - The mathematical or logical foundation.
-  - Use LaTeX ($...$) for equations if technical.
-  - Explain the "Physics" behind the topic.
-  
-  ## 3. Engineering Implementation
-  - Concrete application. 
-  - IF CODING: Provide a robust code block (Python/JS/C++).
-  - IF PROCESS: Provide a step-by-step workflow.
-  
-  ## 4. The "Gotchas" (Critical Analysis)
-  - Common failure modes.
-  - Trade-offs (e.g., Latency vs Throughput).
-  - How pros optimize this.
-  
-  VISUALS:
-  - Include 1 Mermaid.js diagram to explain the hardest concept.
-  - Wrap in \`\`\`mermaid ... \`\`\`
-  - Add "*Figure caption: ...*" immediately after.
-
-  TONE: Dense, insightful, no fluff. No "In this chapter we will..." fillers.
+  LENGTH: 2000+ words. Be dense and professional. No fluff.
   `;
 
-  return cleanUpAIText(await askAI(prompt, userId, { 
-    minLength: 2000, 
-    genOptions: { maxOutputTokens: 6000, temperature: 0.4 } 
-  }));
+  return cleanUpAIText(await askAI(prompt, userId, { maxTokens: 6000 }));
 }
 
-// 4. Conclusion
-async function generateConclusion(bookTopic, userId) {
-  const prompt = `Write a powerful conclusion for a textbook on "${bookTopic}". 
-  Synthesize the journey from First Principles to Advanced Engineering. 
-  Inspire the reader to build something new. 500 words.`;
-  return cleanUpAIText(await askAI(prompt, userId, { genOptions: { maxOutputTokens: 1500 } }));
-}
+// ==================== ASSEMBLY & STYLING ====================
 
-// ==================== PDF BUILDER ====================
-function buildHTML(content, title, figures) {
-  // Inject figures
-  let htmlContent = marked.parse(content);
-  figures.forEach(fig => {
-    const imgHtml = `
-      <figure class="ai-figure">
-        <img src="${fig.base64}" alt="${fig.caption}"/>
-        <figcaption><strong>Figure ${fig.id + 1}:</strong> ${fig.caption}</figcaption>
-      </figure>`;
-    htmlContent = htmlContent.replace(`__FIGURE_${fig.id}__`, imgHtml);
-  });
-
+function getHTMLTemplate(content, title) {
   return `<!DOCTYPE html>
   <html>
   <head>
+    <meta charset="utf-8">
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css">
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
       @page { margin: 2.5cm; }
-      body { font-family: 'Georgia', serif; line-height: 1.6; color: #333; }
-      h1, h2, h3 { font-family: 'Helvetica', sans-serif; color: #2c3e50; }
-      h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 10px; }
-      pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #ddd; }
-      code { font-family: 'Courier New', monospace; color: #d63384; }
-      .ai-figure { text-align: center; margin: 30px 0; page-break-inside: avoid; }
-      .ai-figure img { max-width: 90%; border: 1px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+      body { font-family: 'Crimson Pro', serif; line-height: 1.7; font-size: 13pt; color: #1a1a1a; text-align: justify; }
+      h1, h2, h3 { font-family: 'Inter', sans-serif; color: #111; text-align: left; }
+      h1 { font-size: 32pt; border-bottom: 4px solid #000; padding-bottom: 10px; margin-top: 0; }
+      h2 { font-size: 22pt; margin-top: 2em; border-left: 8px solid #333; padding-left: 15px; background: #f9f9f9; }
+      
+      /* Code Styling */
+      pre { background: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 8px; font-size: 10pt; overflow: hidden; margin: 2em 0; border: 1px solid #333; }
+      code { font-family: 'Courier New', monospace; }
+      .hljs-keyword { color: #569cd6; }
+      .hljs-string { color: #ce9178; }
+
+      /* Table Styling */
+      table { width: 100%; border-collapse: collapse; margin: 2em 0; font-family: 'Inter', sans-serif; font-size: 11pt; }
+      th { background: #333; color: white; padding: 12px; text-align: left; }
+      td { padding: 12px; border-bottom: 1px solid #eee; }
+      tr:nth-child(even) { background: #fcfcfc; }
+
+      /* Visuals */
+      .ai-figure { text-align: center; margin: 3em 0; page-break-inside: avoid; }
+      .ai-figure img { max-width: 100%; border: 1px solid #ddd; padding: 10px; background: white; }
+      figcaption { font-size: 10pt; color: #666; font-style: italic; margin-top: 10px; }
+      
       .chapter-break { page-break-before: always; }
-      blockquote { border-left: 4px solid #3498db; margin: 0; padding-left: 15px; color: #555; font-style: italic; }
+      .dropcap { float: left; font-size: 55pt; line-height: 45pt; padding-top: 4pt; padding-right: 8pt; font-family: 'Inter', sans-serif; font-weight: bold; }
     </style>
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   </head>
   <body>
-    <div style="text-align: center; padding-top: 200px; page-break-after: always;">
-      <h1 style="font-size: 48px; border: none;">${title}</h1>
-      <p style="font-size: 18px; color: #666;">Generated by The Deep Engine</p>
+    <div style="height: 90vh; display: flex; flex-direction: column; justify-content: center; text-align: center;">
+      <h1 style="border: none; font-size: 50pt;">${title}</h1>
+      <p style="font-family: 'Inter'; font-size: 18pt; letter-spacing: 2px;">THE DEFINITIVE TECHNICAL GUIDE</p>
+      <div style="margin-top: 100px; border-top: 1px solid #ccc; padding-top: 20px;">Generated by The Deep Engine</div>
     </div>
-    ${htmlContent}
+    <div class="chapter-break"></div>
+    ${content}
   </body>
   </html>`;
 }
 
-async function generatePDF(html, outputPath) {
-  if (!CONFIG.nutrientKey) {
-    logger.warn("Skipping Nutrient PDF generation (No API Key). Saving HTML instead.");
-    fs.writeFileSync(outputPath.replace('.pdf', '.html'), html);
-    return;
-  }
+export async function generateBookMedd(topic, userId) {
+  const bookTopic = topic.replace(/generate book about/i, '').trim();
+  logger.info(`Starting Masterpiece: ${bookTopic}`);
 
+  // 1. TOC
+  const { raw: tocRaw, chapters } = await generateTOC(bookTopic, userId);
+  
+  // 2. Parallel Chapters
+  const chapterContents = await async.mapLimit(chapters, CONFIG.concurrency, async (info) => {
+    const idx = chapters.indexOf(info) + 1;
+    logger.info(`Writing Chapter ${idx}...`);
+    const md = await generateChapter(bookTopic, idx, info, tocRaw, userId);
+    
+    // Process Mermaid blocks within the chapter markdown
+    let html = marked.parse(md);
+    const diagramRegex = /<pre><code class="hljs language-mermaid">([\s\S]*?)<\/code><\/pre>\s*(?:<p><em>Figure caption:\s*(.*?)(?:<\/em>)?<\/p>)?/gi;
+    
+    let match;
+    let figCount = 1;
+    while ((match = diagramRegex.exec(html)) !== null) {
+      const diagramHtml = await renderDiagram(match[1], match[2] || "System Flow", `${idx}.${figCount}`);
+      html = html.replace(match[0], diagramHtml);
+      figCount++;
+    }
+
+    return `<div class="chapter-break"></div><h1 id="ch${idx}">Chapter ${idx}: ${info.title}</h1>${html}`;
+  });
+
+  // 3. Assemble
+  const fullHtmlBody = `
+    <h1 style="border: none;">Table of Contents</h1>
+    <ul style="list-style: none; font-family: 'Inter'; font-size: 14pt; line-height: 2;">
+      ${chapters.map((c, i) => `<li><strong>Chapter ${i+1}:</strong> ${c.title}</li>`).join('')}
+    </ul>
+    ${chapterContents.join('')}
+  `;
+
+  const finalHtml = getHTMLTemplate(fullHtmlBody, bookTopic.toUpperCase());
+  const outputPath = path.join(CONFIG.dirs.output, `Masterclass_${bookTopic.replace(/\s/g, '_')}.pdf`);
+
+  // 4. PDF Render
   const form = new FormData();
   form.append('instructions', JSON.stringify({
     parts: [{ html: "index.html" }],
-    output: { format: "pdf", pdf: { printBackground: true } }
+    output: { format: "pdf", pdf: { printBackground: true, waitDelay: 2000 } }
   }));
-  form.append('index.html', Buffer.from(html), { filename: 'index.html', contentType: 'text/html' });
+  form.append('index.html', Buffer.from(finalHtml), { filename: 'index.html', contentType: 'text/html' });
 
   const res = await fetch('https://api.nutrient.io/build', {
     method: 'POST',
@@ -340,104 +259,12 @@ async function generatePDF(html, outputPath) {
     body: form
   });
 
-  if (!res.ok) throw new Error(`Nutrient API: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Nutrient Failure: ${res.statusText}`);
   fs.writeFileSync(outputPath, await res.buffer());
+  
+  logger.info(`Book Complete: ${outputPath}`);
+  return outputPath;
 }
-
-// ==================== MAIN ORCHESTRATOR ====================
-export async function generateBookMedd(rawTopic, userId) {
-  const bookTopic = rawTopic.replace(/^(generate|write) (book )?(about )?/i, '').trim();
-  const safeId = `${userId}-${Date.now()}`;
-  const logPrefix = `[${safeId} | ${bookTopic}]`;
-
-  logger.info(`${logPrefix} 🚀 STARTING ENGINE`);
-
-  try {
-    // Phase 1: Structure & Definitions
-    logger.info(`${logPrefix} 🏗️ Designing Syllabus...`);
-    const { raw: tocRaw, chapters } = await generateDeepTOC(bookTopic, safeId);
-    
-    logger.info(`${logPrefix} 🧠 Compiling Book Bible...`);
-    const bookBible = await generateBookBible(bookTopic, safeId);
-    
-    // Phase 2: Parallel Content Generation
-    logger.info(`${logPrefix} ⚡ Generating ${chapters.length} Chapters (Concurrency: ${CONFIG.concurrency})...`);
-    
-    // Context object passed to every worker
-    const globalContext = { bible: bookBible };
-
-    const generatedChapters = await async.mapLimit(chapters, CONFIG.concurrency, async (chapInfo) => {
-      const idx = chapters.indexOf(chapInfo) + 1;
-      logger.info(`${logPrefix}    ▶ Working on Ch ${idx}: ${chapInfo.title}`);
-      
-      try {
-        const content = await generateChapter(bookTopic, idx, chapInfo, globalContext, safeId);
-        logger.info(`${logPrefix}    ✅ Done Ch ${idx}`);
-        return { 
-          idx, 
-          title: chapInfo.title, 
-          content: `\n<div class="chapter-break"></div>\n\n# Chapter ${idx}: ${chapInfo.title}\n\n${content}` 
-        };
-      } catch (err) {
-        logger.error(`${logPrefix}    ❌ Failed Ch ${idx}: ${err.message}`);
-        return { idx, title: chapInfo.title, content: `\n# Chapter ${idx}\n*(Generation Failed)*` };
-      }
-    });
-
-    // Sort chapters by index to ensure order
-    generatedChapters.sort((a, b) => a.idx - b.idx);
-
-    // Phase 3: Conclusion & Assembly
-    logger.info(`${logPrefix} 🏁 Writing Conclusion...`);
-    const conclusion = await generateConclusion(bookTopic, safeId);
-    
-    const fullMarkdown = `
-# Table of Contents
-${tocRaw}
-
-${generatedChapters.map(c => c.content).join('\n')}
-
-<div class="chapter-break"></div>
-# Conclusion
-${conclusion}
-    `;
-
-    // Phase 4: Rendering
-    logger.info(`${logPrefix} 🎨 Rendering Visuals & PDF...`);
-    const formatted = formatMath(fullMarkdown);
-    const { content: finalContent, figures } = await formatDiagrams(formatted);
-    const html = buildHTML(finalContent, bookTopic, figures);
-    
-    const outputName = `Book_${bookTopic.replace(/[^a-z0-9]/gi, '_')}_${safeId}.pdf`;
-    const outputPath = path.join(CONFIG.dirs.output, outputName);
-    
-    await generatePDF(html, outputPath);
-    
-    logger.info(`${logPrefix} 🎉 SUCCESS: ${outputPath}`);
-    return outputPath;
-
-  } catch (e) {
-    logger.error(`${logPrefix} 🔥 FATAL: ${e.message}`);
-    throw e;
-  }
-}
-
-// ==================== QUEUE EXPORT ====================
-// Simple queue to prevent server overload
-const queue = async.queue(async (task) => {
-  return generateBookMedd(task.topic, task.userId);
-}, 1);
-
-export function queueBook(topic, userId) {
-  return new Promise((resolve, reject) => {
-    queue.push({ topic, userId }, (err, res) => {
-      if (err) reject(err);
-      else resolve(res);
-    });
-  });
-}
-
-
 
 
 
