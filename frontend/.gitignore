@@ -27,6 +27,8 @@ yarn-error.log*
 # local env files
 .env
 .env.*
+!.env.example
+!.env.local.example
 .env.local
 .env*.local
 

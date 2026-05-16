@@ -1,7 +1,7 @@
 **Purpose:** Revoke and rotate secrets immediately if they are committed, and keep secrets out of the repo.
 
 - **Do not commit** `.env` or any file with credentials.
-- Use the repository's secret storage (GitHub Actions secrets, Vercel/Railway/Netlify env var settings) for deploy-time secrets.
+- Use the repository's secret storage (GitHub Actions secrets, Vercel/Render/Netlify/Cloud Run/VM environment settings) for deploy-time secrets.
 
 Emergency steps if secrets were committed:
 
@@ -14,8 +14,10 @@ How to use locally:
 
 1. Create `backend/.env` from local values (do not commit):
 ```
+CEREBRAS_API_KEY=your_new_value
 GEMINI_API_KEY=your_new_value
-NUTRIENT_API_KEY=your_new_value
+TOGETHER_API_KEY=your_new_value
+SUPABASE_SERVICE_ROLE_KEY=your_new_value
 ```
 
 2. Install `pre-commit` and enable hooks:

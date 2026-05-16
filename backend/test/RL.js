@@ -1,17 +1,18 @@
 import { Together } from "together-ai";
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import async from 'async';
 import winston from 'winston';
+import dotenv from 'dotenv';
+import { renderHtmlToPdf } from '../utils/pdfRenderer.js';
+import { normalizeMathMarkdown } from '../utils/documentQuality.js';
 
 // Load environment variables
-//dotenv.config();
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -39,10 +40,17 @@ const logger = winston.createLogger({
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
 
-// Init
-const together = new Together({
-  apiKey: '18a96a823e402ef5dfedc1e372bf50fc8e6357bb25a0eff0bea25a07f51a1087', // Fallback for local testing
-});
+// AI Client
+let together = null;
+function ensureTogether() {
+  if (together) return together;
+  const apiKey = process.env.TOGETHER_API_KEY;
+  if (!apiKey) {
+    throw new Error('TOGETHER_API_KEY is not set in environment.');
+  }
+  together = new Together({ apiKey });
+  return together;
+}
 
 // Markdown & Code Highlighting
 marked.setOptions({
@@ -118,7 +126,7 @@ async function askAI(prompt, userId, bookTopic) {
   const messages = [...trimmedHistory, { role: 'user', content: prompt }];
 
   try {
-    const response = await together.chat.completions.create({
+    const response = await ensureTogether().chat.completions.create({
       messages,
       model: "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
       top_p: 0.9,                 // balance of creativity and clarity
@@ -181,28 +189,7 @@ async function generateChapter(prompt, chapterNum, userId, bookTopic) {
 
 // === Formatter ===
 function formatMath(content) {
-  const links = [];
-  content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    links.push(`<a href="${url}" target="_blank">${text}</a>`);
-    return `__LINK__${links.length - 1}__`;
-  });
-
-  content = content
-    .replace(/\[\s*(.*?)\s*\]/gs, (_, math) => `\\(${math}\\)`)
-    .replace(/\(\s*(.*?)\s*\)/gs, (_, math) => `\\(${math}\\)`)
-
-    .replace(
-      /([a-zA-Z0-9]+)\s*\^\s*([a-zA-Z0-9]+)/g,
-      (_, base, exp) => `\\(${base}^{${exp}}\\)`,
-    )
-
-    .replace(
-      /(?<!\\)(?<!\w)(\d+)\s*\/\s*(\d+)(?!\w)/g,
-      (_, num, den) => `\\(\\frac{${num}}{${den}}\\)`,
-    );
-
-  content = content.replace(/__LINK__(\d+)__/g, (_, i) => links[i]);
-  return content;
+  return normalizeMathMarkdown(content);
 }
 
 function cleanUpAIText(text) {
@@ -215,98 +202,50 @@ function cleanUpAIText(text) {
 }
 
 async function generatePDF(content, outputPath) {
-  const cleaned = cleanUpAIText(content);
-
+  const cleaned = cleanUpAIText(formatMath(String(content)));
   const html = `
   <html>
     <head>
       <meta charset="utf-8">
-      <title>Document</title>
-      <script type="text/javascript" id="MathJax-script" async
-        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+      <title>Research Paper</title>
+      <script>
+        window.MathJax = {
+          tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+          svg: { fontCache: 'global' }
+        };
       </script>
+      <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-      <බ
-
       <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-cpp.min.js"></script>
       <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" rel="stylesheet">
       <style>
-        @page { margin: 80px 60px; }
-        body { font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif; font-size: 13.5px; line-height: 1.7; color: #1a1a1a; background: white; margin: 0; padding: 0; text-align: justify; }
-        .cover { text-align: center; margin-top: 200px; }
-        .cover h1 { font-size: 36px; font-weight: 700; margin-bottom: 0.2em; }
-        .cover h2 { font-size: 20px; font-weight: 400; color: #555; }
-        .page-break { page-break-before: always; }
-        h1, h2, h3 { font-weight: 600; color: #2c3e50; margin-top: 2em; margin-bottom: 0.4em; }
-        h1 { font-size: 24px; border-bottom: 2px solid #e0e0e0; padding-bottom: 5px; }
-        h2 { font-size: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 3px; }
-        h3 { font-size: 16px; }
+        @page { margin: 80px 60px; size: A4; }
+        body { font-family: Georgia, 'Times New Roman', serif; font-size: 14px; line-height: 1.7; color: #222; margin: 0; padding: 0; text-align: justify; }
+        h1, h2, h3 { margin-top: 2em; margin-bottom: 0.7em; color: #1f2937; }
+        h1 { font-size: 26px; border-bottom: 2px solid #d1d5db; padding-bottom: 8px; page-break-before: always; }
+        h2 { font-size: 21px; }
+        h3 { font-size: 17px; }
         p { margin: 0 0 1em 0; }
-        a { color: #007acc; text-decoration: underline; }
-        code, pre { font-family: 'Fira Code', monospace; border-radius: 6px; font-size: 13px; }
-        code { background: #f4f4f4; padding: 3px 8px; border: 1px solid #e0e0e0; }
-        pre { background: #f8f9fa; padding: 20px; overflow-x: auto; border: 1px solid #e0e0e0; line-height: 1.5; margin: 1.2em 0; white-space: pre-wrap; word-wrap: break-word; overflow-x: hidden; }
-        pre code { background: none; border: none; padding: 0; }
-        blockquote { border-left: 4px solid #007acc; margin: 1.5em 0; padding: 0.5em 0 0.5em 1.5em; background: #f8f9fa; color: #2c3e50; font-style: italic; border-radius: 4px; }
-        hr { border: none; border-top: 1px solid #e0e0e0; margin: 2em 0; }
-        .footer { font-size: 10px; text-align: center; width: 100%; color: #999; }
-        .example { background: #f8f9fa; border-left: 4px solid #007acc; padding: 15px 20px; margin: 1.5em 0; border-radius: 4px; font-style: italic; }
-        .toc { page-break-after: always; margin: 2em 0; padding: 1em; background: #f8f9fa; border-radius: 6px; }
-        .toc h2 { font-size: 20px; border-bottom: 1px solid #e0e0e0; margin-bottom: 1em; }
-        .toc ul { list-style: none; padding: 0; }
-        .toc li { margin: 0.5em 0; }
-        .toc a { text-decoration: none; color: #007acc; }
-        .toc a:hover { text-decoration: underline; }
+        pre { background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e5e7eb; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }
+        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+        pre code { background: transparent; padding: 0; }
+        table { border-collapse: collapse; width: 100%; margin: 1.5em 0; page-break-inside: avoid; }
+        th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; }
+        th { background: #f3f4f6; }
+        blockquote { border-left: 4px solid #64748b; margin: 1.5em 0; padding: 0.8em 1.2em; background: #f8fafc; }
       </style>
     </head>
     <body>
-      <div class="cover">
-        <h1 style="font-family: sans-serif; margin-top: 100px; font-size: 14px; color: #777;">Generated by Bookgen.ai</h1>
-        <p style="font-family: sans-serif; margin-top: 100px; font-size: 12px; color: #f00;">Caution: AI can make mistake </p>
-      </div>
-      <div class="page-break"></div>
       ${marked.parse(cleaned)}
-      <script>
-        document.addEventListener('DOMContentLoaded', () => {
-          Prism.highlightAll();
-        });
-      </script>
     </body>
-  </html>
-  `;
+  </html>`;
 
-  try {
-    const browser = await puppeteer.launch({
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-      args: chromium.args,
-    });
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    await page.pdf({
-      path: outputPath,
-      format: "A4",
-      printBackground: true,
-      displayHeaderFooter: true,
-      footerTemplate: `
-        <div class="footer" style="font-family: 'Inter', sans-serif; font-size: 10px; color: #999; text-align: center; width: 100%;">
-          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
-        </div>
-      `,
-      headerTemplate: `<div style="font-size: 10px; text-align: center; width: 100%; color: #999;">
-        bookgenai.vercel.app
-      </div>`,
-      margin: { top: "80px", bottom: "80px", left: "60px", right: "60px" },
-    });
-    await browser.close();
-    logger.info(`Generated PDF: ${outputPath}`);
-  } catch (error) {
-    logger.error(`PDF generation failed: ${error.message}`);
-    throw error;
-  }
+  await renderHtmlToPdf(html, outputPath, {
+    margin: { top: '80px', bottom: '80px', left: '60px', right: '60px' },
+    headerTemplate: '<div style="font-size:10px;text-align:center;width:100%;color:#6b7280;">Generated by Bookgen.ai</div>',
+    footerTemplate: '<div style="font-size:10px;text-align:center;width:100%;color:#6b7280;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>'
+  });
 }
 
 // === Prompt Generator ===
