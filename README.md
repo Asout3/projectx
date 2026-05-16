@@ -2,7 +2,7 @@
 
 Bookgen.ai is a full-stack AI document generator for producing structured books and research papers as downloadable **PDF** or **DOCX** files. The project combines a Next.js frontend, a Node/Express backend, AI generation providers, local Chromium PDF rendering, and Supabase document storage.
 
-> **Important quality note:** AI-generated content can contain mistakes, outdated facts, or invented references. The backend prompts and rendering pipeline are designed to reduce repetition and hallucination, but generated documents should still be reviewed before publishing or sharing professionally.
+> **Important quality note:** AI-generated content can contain mistakes, outdated facts, or invented references. The backend prompts and rendering pipeline are designed to reduce repetition and hallucination, but generated documents should still be reviewed before publishing or sharing professionally and it is personal side project which was cool at that time and the original code was written by asout3.
 
 ---
 
@@ -630,4 +630,4 @@ Backend dependency cleanup:
 
 ## License
 
-This project currently uses the license declared in each package file. Review and update licensing before public distribution.
+idk u can use it its open to everybody but don't forget to start this project and give me a follow.
