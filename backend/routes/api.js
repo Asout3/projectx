@@ -13,6 +13,10 @@ import {
 
 const router = express.Router();
 
+router.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'bookgen-api' });
+});
+
 router.post('/generateBookSmall', generateBookSmall);
 router.post('/generateBookMed', generateBookMed);
 router.post('/generateBookLong', generateBookLong);

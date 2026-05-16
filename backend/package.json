@@ -15,6 +15,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@cerebras/cerebras_cloud_sdk": "latest",
     "@google/generative-ai": "latest",
     "@sparticuz/chromium": "^119.0.0",
     "@supabase/supabase-js": "^2.48.1",
@@ -25,7 +26,6 @@
     "docx": "^9.0.4",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
-    "form-data": "latest",
     "highlight.js": "^11.11.1",
     "html-docx-js": "^0.3.1",
     "katex": "^0.16.9",
@@ -33,11 +33,9 @@
     "node-fetch": "latest",
     "pdfkit": "^0.13.0",
     "pdfkit-table": "^0.1.99",
-    "pdfshift": "latest",
     "puppeteer-core": "^21.3.8",
     "svg2pdf.js": "^2.2.1",
     "together-ai": "^0.15.2",
-    "@cerebras/cerebras_cloud_sdk": "latest",
     "winston": "^3.17.0"
   }
 }

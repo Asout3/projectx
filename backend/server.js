@@ -24,7 +24,11 @@ app.use(cors({
 
 app.use(express.json());
 
-const PORT = process.env.PORT;  // 5000
+const PORT = process.env.PORT || 5000;
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'bookgen-api' });
+});
 
 // Use the routes
 app.use('/api', apiRoutes);
